@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { gsap, prefersReducedMotion } from "@/lib/gsap";
 import { Navbar } from "@/components/layout/Navbar";
 import { ContentRow } from "@/components/rows/ContentRow";
+import { MiniPlayer } from "@/components/overlays/MiniPlayer";
 import { MagneticButton } from "@/components/motion/MagneticButton";
 import { SplitTextReveal } from "@/components/motion/SplitTextReveal";
 import { ArcBadge } from "@/components/ui/ArcBadge";
@@ -150,6 +151,7 @@ function BrowsePage() {
 
         <Footer />
       </main>
+      <MiniPlayer />
     </>
   );
 }
