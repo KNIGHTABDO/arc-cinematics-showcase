@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { motion } from "framer-motion";
 import { Navbar } from "@/components/layout/Navbar";
@@ -7,6 +7,7 @@ import { MagneticButton } from "@/components/motion/MagneticButton";
 import { ArcBadge } from "@/components/ui/ArcBadge";
 import { SplitTextReveal } from "@/components/motion/SplitTextReveal";
 import { MovieCard } from "@/components/cards/MovieCard";
+import { TrailerModal } from "@/components/overlays/TrailerModal";
 import { findTitle, EPISODES, CAST, ACCLAIMED, BECAUSE_DUNE } from "@/data/catalog";
 import { gradientFor, avatarGradient } from "@/lib/gradients";
 import { useCursorHover } from "@/lib/cursor-context";
@@ -41,7 +42,16 @@ type Tab = (typeof TABS)[number];
 function TitlePage() {
   const { title } = Route.useLoaderData();
   const [tab, setTab] = useState<Tab>("Overview");
+  const [trailerOpen, setTrailerOpen] = useState(false);
+  const playBtnRef = useRef<HTMLButtonElement>(null);
+  const trailerThumbRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const [trailerOrigin, setTrailerOrigin] = useState<React.RefObject<HTMLElement | null>>(playBtnRef as React.RefObject<HTMLElement | null>);
   const linkCursor = useCursorHover("link");
+
+  const openTrailer = (ref: React.RefObject<HTMLElement | null>) => {
+    setTrailerOrigin(ref);
+    setTrailerOpen(true);
+  };
 
   return (
     <>
