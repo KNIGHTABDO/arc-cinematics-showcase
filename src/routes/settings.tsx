@@ -1,245 +1,123 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useSettings } from "@/lib/store/settings";
 import { useState } from "react";
+import { useAuth } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/Navbar";
-import { ArcToggle } from "@/components/ui/ArcToggle";
-import { Segmented } from "@/components/ui/Segmented";
-import { useCursorHover } from "@/lib/cursor-context";
-import { avatarGradient } from "@/lib/gradients";
-import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/settings")({
-  head: () => ({
-    meta: [
-      { title: "Settings — ARC" },
-      { name: "description", content: "Manage your ARC account, playback, and appearance." },
-      { property: "og:title", content: "Settings — ARC" },
-      { property: "og:description", content: "Manage your ARC account, playback, and appearance." },
-    ],
-  }),
   component: SettingsPage,
 });
 
-const SECTIONS = [
-  "Account",
-  "Profiles",
-  "Playback",
-  "Appearance",
-  "Notifications",
-  "Subscription",
-  "Help",
-] as const;
-type Section = (typeof SECTIONS)[number];
+const DEFAULT_COLORS = [
+  { name: "Arc Purple", value: "oklch(0.76 0.15 305)" },
+  { name: "Neon Blue", value: "oklch(0.75 0.14 250)" },
+  { name: "Emerald", value: "oklch(0.75 0.14 150)" },
+  { name: "Crimson", value: "oklch(0.65 0.22 25)" },
+  { name: "Golden", value: "oklch(0.85 0.15 80)" },
+];
 
 function SettingsPage() {
-  const [section, setSection] = useState<Section>("Account");
-  const [autoplay, setAutoplay] = useState(true);
-  const [skipIntro, setSkipIntro] = useState(true);
-  const [downloadHQ, setDownloadHQ] = useState(false);
-  const [push, setPush] = useState(true);
-  const [emails, setEmails] = useState(false);
-  const [quality, setQuality] = useState<"Auto" | "1080p" | "4K">("4K");
-  const [theme, setTheme] = useState<"Dark" | "Dim" | "Light">("Dark");
-  const cursor = useCursorHover("link");
+  const { profile, updateSettings } = useSettings();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  if (!profile) return null;
 
   return (
-    <>
+    <div className="min-h-screen pt-24 pb-12 px-[5vw]">
       <Navbar />
-      <main className="relative min-h-screen pt-28 pb-20">
-        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-[5vw] md:grid-cols-[240px_1fr]">
-          {/* Sidebar */}
-          <aside className="md:sticky md:top-28 md:self-start">
-            <h1 className="font-display text-3xl font-extrabold">Settings</h1>
-            <nav className="mt-6 flex flex-row gap-1 overflow-x-auto md:flex-col">
-              {SECTIONS.map((s) => (
-                <button
-                  key={s}
-                  {...cursor}
-                  onClick={() => setSection(s)}
-                  className={cn(
-                    "group relative flex items-center justify-start whitespace-nowrap rounded-md px-3 py-2 text-sm transition-all focus-visible:outline-none",
-                    section === s
-                      ? "bg-white/[0.04] text-arc-text"
-                      : "text-arc-muted hover:translate-x-1 hover:text-arc-text",
-                  )}
-                >
-                  {section === s && (
-                    <span className="absolute left-0 top-1/2 h-5 -translate-y-1/2 w-[3px] rounded-r bg-arc-accent" />
-                  )}
-                  {s}
-                </button>
-              ))}
-            </nav>
-          </aside>
-
-          {/* Content */}
-          <section className="min-h-[60vh] arc-scrollbar">
-            {section === "Account" && (
-              <Block title="Account" desc="Your basic ARC profile and subscription.">
-                <div className="flex items-center gap-5">
-                  <div
-                    className="group relative h-20 w-20 cursor-pointer overflow-hidden rounded-full border border-white/15"
-                    style={{ background: avatarGradient("Alex") }}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 text-xs text-white opacity-0 transition group-hover:bg-black/60 group-hover:opacity-100">
-                      Edit
-                    </div>
-                  </div>
-                  <div>
-                    <div className="font-display text-xl font-bold">Alex Morgan</div>
-                    <div className="mt-1 flex items-center gap-2 text-sm text-arc-muted">
-                      alex@arc.tv
-                      <span className="rounded-full bg-arc-accent/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-arc-accent">
-                        VERIFIED
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  className="mt-8 rounded-2xl p-px"
-                  style={{ background: "linear-gradient(135deg, var(--arc-accent), var(--arc-accent-2))" }}
-                >
-                  <div className="rounded-2xl bg-arc-surface p-6">
-                    <div className="label-caps text-arc-accent">Current Plan</div>
-                    <div className="mt-2 flex items-baseline justify-between">
-                      <div>
-                        <div className="font-display text-2xl font-extrabold">ARC Premiere</div>
-                        <div className="mt-1 text-sm text-arc-muted">Renews on March 14, 2025</div>
-                      </div>
-                      <button {...cursor} className="text-sm text-arc-accent hover:underline">
-                        Manage →
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </Block>
-            )}
-
-            {section === "Playback" && (
-              <Block title="Playback" desc="Tune how stories play.">
-                <Row label="Autoplay next episode">
-                  <ArcToggle checked={autoplay} onChange={setAutoplay} />
-                </Row>
-                <Row label="Auto-skip intros">
-                  <ArcToggle checked={skipIntro} onChange={setSkipIntro} />
-                </Row>
-                <Row label="High quality downloads">
-                  <ArcToggle checked={downloadHQ} onChange={setDownloadHQ} />
-                </Row>
-                <Row label="Streaming quality">
-                  <Segmented options={["Auto", "1080p", "4K"] as const} value={quality} onChange={setQuality} />
-                </Row>
-                <Row label="Audio language">
-                  <select
-                    {...cursor}
-                    className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs text-arc-text focus:outline-none"
-                    defaultValue="English"
-                  >
-                    {["English", "Français", "日本語", "Español", "Deutsch"].map((l) => (
-                      <option key={l} value={l} className="bg-arc-surface">{l}</option>
-                    ))}
-                  </select>
-                </Row>
-              </Block>
-            )}
-
-            {section === "Appearance" && (
-              <Block title="Appearance" desc="ARC adapts to the room.">
-                <div className="grid gap-4 sm:grid-cols-3">
-                  {(["Dark", "Dim", "Light"] as const).map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setTheme(t)}
-                      {...cursor}
-                      className={cn(
-                        "group relative overflow-hidden rounded-xl border p-4 text-left transition-all",
-                        theme === t ? "border-arc-accent bg-arc-accent/5" : "border-white/10 hover:border-white/30",
-                      )}
-                    >
-                      <div
-                        className="mb-4 aspect-video w-full rounded-lg"
-                        style={{
-                          background:
-                            t === "Dark"
-                              ? "linear-gradient(135deg, #080808, #1a1a1a)"
-                              : t === "Dim"
-                                ? "linear-gradient(135deg, #1a1a2e, #2d2d44)"
-                                : "linear-gradient(135deg, #f5f5f5, #e2e2e2)",
-                        }}
-                      />
-                      <div className="text-sm font-medium">{t}</div>
-                      <div className="mt-1 text-xs text-arc-muted">
-                        {t === "Dark" ? "Cinematic & deep" : t === "Dim" ? "Soft contrast" : "Daylight"}
-                      </div>
-                      {theme === t && (
-                        <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-arc-accent text-[10px] text-arc-void">
-                          ✓
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </Block>
-            )}
-
-            {section === "Notifications" && (
-              <Block title="Notifications" desc="Stay in the loop — or don't.">
-                <Row label="Push notifications">
-                  <ArcToggle checked={push} onChange={setPush} />
-                </Row>
-                <Row label="Newsletter & releases">
-                  <ArcToggle checked={emails} onChange={setEmails} />
-                </Row>
-              </Block>
-            )}
-
-            {section === "Profiles" && (
-              <Block title="Profiles" desc="Up to 5 unique watchers.">
-                <div className="text-sm text-arc-muted">Manage who's on this account from the “Who's watching?” screen.</div>
-              </Block>
-            )}
-
-            {section === "Subscription" && (
-              <Block title="Subscription" desc="Plan, billing & invoices.">
-                <Row label="Plan"><span className="text-sm">ARC Premiere · $19/mo</span></Row>
-                <Row label="Next charge"><span className="text-sm">March 14, 2025</span></Row>
-                <Row label="Payment method"><span className="text-sm">•••• 4421</span></Row>
-              </Block>
-            )}
-
-            {section === "Help" && (
-              <Block title="Help" desc="We're here.">
-                <div className="text-sm text-arc-muted">
-                  Visit the help center, contact support, or read the playback troubleshooting guide.
-                </div>
-              </Block>
-            )}
-          </section>
+      
+      <div className="max-w-4xl mx-auto space-y-12">
+        <div>
+          <h1 className="font-display text-4xl font-extrabold tracking-tight">Profile Settings</h1>
+          <p className="text-arc-muted mt-2">Manage preferences for {profile.name}'s viewing experience.</p>
         </div>
-      </main>
-    </>
-  );
-}
 
-function Block({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-6">
-        <h2 className="font-display text-2xl font-bold tracking-tight">{title}</h2>
-        {desc && <p className="mt-1 text-sm text-arc-muted">{desc}</p>}
-      </div>
-      <div className="space-y-4 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6">
-        {children}
-      </div>
-    </div>
-  );
-}
+        {/* Global Settings */}
+        <section className="space-y-6 arc-card p-6 md:p-8">
+          <h2 className="font-display text-2xl font-bold">Localization</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-3">
+              <label className="text-sm font-semibold text-arc-text/80">UI Language</label>
+              <select 
+                className="w-full bg-arc-surface-2 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-arc-accent transition"
+                value={profile.ui_language}
+                onChange={(e) => updateSettings({ ui_language: e.target.value, tmdb_language: e.target.value === 'ar' ? 'ar-SA' : e.target.value === 'fr' ? 'fr-FR' : 'en-US' })}
+              >
+                <option value="en">English</option>
+                <option value="ar">العربية (Arabic)</option>
+                <option value="fr">Français (French)</option>
+              </select>
+            </div>
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 border-b border-white/[0.04] py-3 last:border-0">
-      <div className="text-sm text-arc-text/85">{label}</div>
-      <div>{children}</div>
+            <div className="space-y-3">
+              <label className="text-sm font-semibold text-arc-text/80">Default Subtitles (Real-Debrid)</label>
+              <select 
+                className="w-full bg-arc-surface-2 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-arc-accent transition"
+                value={profile.subtitle_language}
+                onChange={(e) => updateSettings({ subtitle_language: e.target.value })}
+              >
+                <option value="ar">Arabic</option>
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="es">Spanish</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Streaming Preferences */}
+        <section className="space-y-6 arc-card p-6 md:p-8">
+          <h2 className="font-display text-2xl font-bold">Streaming Backbone</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-3">
+              <label className="text-sm font-semibold text-arc-text/80">Default Video Quality</label>
+              <select 
+                className="w-full bg-arc-surface-2 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-arc-accent transition"
+                value={profile.video_quality}
+                onChange={(e) => updateSettings({ video_quality: e.target.value })}
+              >
+                <option value="4k">4K HDR / 2160p (Best Quality)</option>
+                <option value="1080p">1080p (Fastest Start)</option>
+                <option value="720p">720p (Data Saver)</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Application Theme */}
+        <section className="space-y-6 arc-card p-6 md:p-8">
+          <h2 className="font-display text-2xl font-bold">Aesthetics</h2>
+          
+          <div className="space-y-4">
+             <label className="text-sm font-semibold text-arc-text/80">Theme Accent Color</label>
+             <div className="flex flex-wrap gap-4">
+                {DEFAULT_COLORS.map(c => (
+                  <button
+                    key={c.name}
+                    onClick={() => updateSettings({ theme_accent: c.value })}
+                    className={`h-12 w-12 rounded-full border-2 transition-transform hover:scale-110 ${profile.theme_accent === c.value ? 'border-white scale-110 shadow-[0_0_20px_var(--arc-accent)]' : 'border-transparent'}`}
+                    style={{ background: c.value }}
+                    title={c.name}
+                  />
+                ))}
+             </div>
+          </div>
+        </section>
+        
+        {/* Profile Action */}
+        <div className="flex justify-between items-center pt-8 border-t border-white/10">
+           <button onClick={() => navigate({ to: "/profiles" })} className="text-arc-muted hover:text-white transition">
+             Switch Profile
+           </button>
+           <button onClick={() => navigate({ to: "/browse" })} className="bg-arc-accent text-arc-void px-8 py-3 rounded-full font-bold hover:bg-white transition">
+             Done
+           </button>
+        </div>
+
+      </div>
     </div>
   );
 }

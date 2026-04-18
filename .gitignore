@@ -1,3 +1,19 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Testing
+coverage
+
+# Production
+dist
+dist-ssr
+.output
+.vinxi
+.tanstack/**
+.nitro
+
 # Logs
 logs
 *.log
@@ -7,20 +23,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
-*.local
-
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
 
-# Editor directories and files
+# Editor/OS files
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -30,3 +37,33 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environments
+.env
+.env.*
+!.env.example
+*.local
+
+# Supabase & Local Tools
+supabase/.temp/
+supabase/.branches/
+mcp_config.json
+
+# AI Agent Artifacts & Skills
+.agents/
+.claude/
+.gemini/
+.lovable/
+.qoder/
+.trae/
+.windsurf/
+skills/
+skills-lock.json
+
+# Temp/Scratch Files (Keep critical docs)
+*.txt
+*.md
+!README.md
+!walkthrough.md
+!task.md
+!implementation_plan.md

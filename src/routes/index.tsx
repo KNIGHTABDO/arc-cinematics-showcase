@@ -1,146 +1,123 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { gsap, prefersReducedMotion } from "@/lib/gsap";
-import { PROFILES } from "@/data/profiles";
-import { avatarGradient } from "@/lib/gradients";
 import { useCursorHover } from "@/lib/cursor-context";
 import { SplitTextReveal } from "@/components/motion/SplitTextReveal";
+import { useAuth } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Who's watching? — ARC" },
-      { name: "description", content: "Choose a profile to start watching on ARC." },
-      { property: "og:title", content: "Who's watching? — ARC" },
-      { property: "og:description", content: "Choose a profile to start watching on ARC." },
+      { title: "ARC — Cinematic Excellence" },
+      { name: "description", content: "Experience cinematic streaming without limits." },
     ],
   }),
-  component: WhosWatching,
+  component: LandingPage,
 });
 
-function WhosWatching() {
-  const navigate = useNavigate();
+function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [picking, setPicking] = useState<string | null>(null);
   const linkCursor = useCursorHover("link");
+  const navigate = useNavigate();
+  const { session, loading } = useAuth();
+
+  useEffect(() => {
+    // If already logged in, seamlessly redirect to profiles page
+    if (!loading && session) {
+      navigate({ to: "/profiles", replace: true });
+    }
+  }, [session, loading, navigate]);
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
-    if (containerRef.current) {
-      gsap.from(containerRef.current.querySelectorAll("[data-stagger]"), {
-        y: 30,
-        opacity: 0,
-        duration: 0.9,
-        stagger: 0.08,
-        ease: "power3.out",
-        delay: 0.4,
-      });
-    }
+    
+    const ctx = gsap.context(() => {
+      if (containerRef.current) {
+        const tl = gsap.timeline();
+        
+        tl.fromTo(containerRef.current.querySelector(".logo-mark"), 
+          { y: -30, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 1,
+            ease: "power3.out",
+            delay: 0.2,
+          }
+        )
+        .fromTo(containerRef.current.querySelectorAll("[data-stagger]"), 
+          { y: 40, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 1,
+            stagger: 0.1,
+            ease: "expo.out",
+          }, 
+          "-=0.5"
+        );
+      }
+    }, containerRef);
+    
+    return () => ctx.revert();
   }, []);
 
-  const pick = (id: string, btn: HTMLButtonElement) => {
-    setPicking(id);
-    if (prefersReducedMotion()) {
-      navigate({ to: "/browse" });
-      return;
-    }
-    gsap.to(btn, {
-      scale: 0.9,
-      duration: 0.15,
-      ease: "power2.in",
-      onComplete: () => {
-        gsap.to(btn, {
-          scale: 1.1,
-          duration: 0.25,
-          ease: "back.out(2)",
-          onComplete: () => {
-            const go = () => navigate({ to: "/browse" });
-            if ("startViewTransition" in document) {
-              (document as Document & { startViewTransition: (cb: () => void) => unknown }).startViewTransition(go);
-            } else {
-              go();
-            }
-          },
-        });
-      },
-    });
-  };
+  if (loading || session) return null; // Avoid flicker while checking auth state
 
   return (
-    <main ref={containerRef} className="relative flex min-h-screen flex-col items-center justify-center bg-arc-void px-6">
-      <div data-stagger className="absolute left-1/2 top-10 -translate-x-1/2">
+    <main ref={containerRef} className="relative flex min-h-screen flex-col items-center justify-center bg-arc-void px-6 overflow-hidden">
+      
+      {/* Dynamic Background */}
+      <div className="absolute inset-0 z-0 opacity-40">
+        <div className="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-arc-accent/20 blur-[120px]" />
+      </div>
+
+      <div className="z-10 absolute left-8 top-8 logo-mark">
         <Wordmark />
       </div>
 
-      <div className="mb-14 text-center">
+      <div className="z-10 flex flex-col items-center text-center max-w-4xl">
+        <div className="mb-4 inline-flex items-center rounded-full border border-arc-accent/30 bg-arc-accent/10 px-4 py-1.5 backdrop-blur-md" data-stagger>
+          <span className="text-xs font-semibold uppercase tracking-widest text-arc-accent">
+            Next-Gen Streaming
+          </span>
+        </div>
+        
         <SplitTextReveal
-          text="Who's watching?"
+          text="Cinema without limits."
           as="h1"
-          className="font-display text-[clamp(40px,6vw,72px)] font-extrabold tracking-tight"
-          stagger={0.025}
-          delay={0.2}
+          className="font-display text-[clamp(48px,8vw,96px)] font-extrabold tracking-tighter leading-none"
+          stagger={0.03}
+          delay={0.4}
         />
-      </div>
+        
+        <p data-stagger className="mt-8 max-w-2xl text-lg md:text-xl text-arc-text/70">
+          Experience buffer-free 4K streaming powered by decentralized edge networks. 
+          No storage required. Pure cinematic excellence.
+        </p>
 
-      <div data-stagger className="flex flex-wrap items-start justify-center gap-8 md:gap-12">
-        {PROFILES.map((p) => (
-          <button
-            key={p.id}
-            onClick={(e) => pick(p.id, e.currentTarget)}
+        <div data-stagger className="mt-12 flex flex-col sm:flex-row items-center gap-6">
+          <Link
+            to="/register"
             {...linkCursor}
-            className="group flex flex-col items-center gap-4 focus-visible:outline-none"
+            className="group relative flex items-center justify-center overflow-hidden rounded-full bg-arc-accent px-8 py-4 text-sm font-bold tracking-wide text-arc-void transition-all hover:scale-105 active:scale-95"
           >
-            <div className="relative h-24 w-24 md:h-28 md:w-28">
-              <div
-                className="absolute inset-0 rounded-full opacity-0 transition-opacity duration-300 group-hover:opacity-100 spin-ring"
-                style={{
-                  background: `conic-gradient(from 0deg, var(--arc-accent), var(--arc-accent-2), var(--arc-accent))`,
-                  padding: 2,
-                  WebkitMask:
-                    "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
-                  WebkitMaskComposite: "xor",
-                  maskComposite: "exclude",
-                }}
-              />
-              <div
-                className="flex h-full w-full items-center justify-center rounded-full font-display text-2xl font-extrabold text-white/90 transition-transform duration-500 group-hover:scale-105"
-                style={{
-                  background: avatarGradient(p.name),
-                  opacity: picking && picking !== p.id ? 0.4 : 1,
-                }}
-              >
-                {p.initials}
-              </div>
-            </div>
-            <span className="label-caps text-arc-text/70 transition-colors group-hover:text-arc-accent">
-              {p.name}
-            </span>
-          </button>
-        ))}
-
-        {/* Add profile */}
-        <button {...linkCursor} className="group flex flex-col items-center gap-4 focus-visible:outline-none">
-          <div className="flex h-24 w-24 items-center justify-center rounded-full border border-dashed border-white/15 text-white/50 transition-all group-hover:border-arc-accent/60 group-hover:text-arc-accent md:h-28 md:w-28">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </div>
-          <span className="label-caps text-arc-text/50">Add</span>
-        </button>
+            <span className="relative z-10">Start Watching Free</span>
+            <div className="absolute inset-0 z-0 bg-white/20 opacity-0 transition-opacity group-hover:opacity-100" />
+          </Link>
+          
+          <Link
+            to="/login"
+            {...linkCursor}
+            className="group flex items-center gap-2 text-sm font-semibold tracking-wide text-arc-text transition-colors hover:text-arc-accent"
+          >
+            Sign In
+            <span className="transition-transform group-hover:translate-x-1">→</span>
+          </Link>
+        </div>
       </div>
 
-      <div data-stagger className="mt-14 text-center">
-        <a
-          href="#"
-          {...linkCursor}
-          className="group relative text-[13px] text-arc-muted transition hover:text-arc-text"
-        >
-          Manage Profiles
-          <span className="absolute inset-x-0 -bottom-0.5 h-px w-0 origin-left bg-arc-accent transition-all duration-300 group-hover:w-full" />
-        </a>
-      </div>
-
-      <div className="absolute inset-x-0 bottom-0">
+      <div className="absolute inset-x-0 bottom-0 z-20">
         <div className="arc-hue-line" />
       </div>
     </main>
@@ -149,12 +126,12 @@ function WhosWatching() {
 
 function Wordmark() {
   return (
-    <div className="font-display text-[28px] font-extrabold tracking-tight">
+    <div className="font-display text-[24px] font-extrabold tracking-tight">
       <span className="text-arc-text">A</span>
       <span className="relative inline-block">
         R
         <span
-          className="absolute -bottom-0 -right-1 h-1.5 w-1.5"
+          className="absolute -bottom-0 -right-1 h-1 w-1"
           style={{ background: "var(--arc-accent)", transform: "rotate(45deg)" }}
         />
       </span>

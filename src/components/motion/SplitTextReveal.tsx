@@ -11,15 +11,23 @@ interface SplitTextRevealProps {
   as?: "h1" | "h2" | "h3" | "p" | "span";
 }
 
+// Detect if text contains RTL characters (Arabic, Hebrew, etc.)
+function isRTL(text: string): boolean {
+  return /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
+}
+
 export function SplitTextReveal({
   text,
   className,
-  by = "char",
+  by: byProp,
   stagger = 0.025,
   delay = 0,
   as: Tag = "h1",
 }: SplitTextRevealProps) {
   const ref = useRef<HTMLElement>(null);
+  const rtl = isRTL(text);
+  // Force word-level splitting for RTL text to prevent character reversal
+  const by = rtl ? "word" : (byProp || "char");
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
@@ -37,6 +45,8 @@ export function SplitTextReveal({
     });
     return () => {
       tween.kill();
+      // Clean up inline styles to prevent GSAP visibility bugs
+      items.forEach(item => { item.style.removeProperty("transform"); item.style.removeProperty("opacity"); });
     };
   }, [text, by, stagger, delay]);
 
@@ -63,7 +73,7 @@ export function SplitTextReveal({
     <Tag
       ref={ref as never}
       className={cn("overflow-hidden inline-block", className)}
-      style={{ lineHeight: 0.95 }}
+      style={{ lineHeight: 0.95, direction: rtl ? "rtl" : "ltr" }}
     >
       <span className="inline-block" style={{ overflow: "hidden" }}>
         {tokens}

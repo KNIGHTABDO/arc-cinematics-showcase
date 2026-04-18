@@ -4,14 +4,9 @@ import { gsap, prefersReducedMotion } from "@/lib/gsap";
 import { useCursorHover } from "@/lib/cursor-context";
 import { avatarGradient } from "@/lib/gradients";
 import { cn } from "@/lib/utils";
-
-const NAV = [
-  { to: "/browse", label: "Home" },
-  { to: "/browse", label: "Discover" },
-  { to: "/browse", label: "Movies" },
-  { to: "/browse", label: "Series" },
-  { to: "/my-list", label: "My List" },
-] as const;
+import { useSettings } from "@/lib/store/settings";
+import { getNavItems, t } from "@/lib/i18n";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
 export function Navbar() {
   const ref = useRef<HTMLElement>(null);
@@ -19,6 +14,8 @@ export function Navbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const location = useLocation();
   const linkCursor = useCursorHover("link");
+  const { profile, lang, updateSettings } = useSettings();
+  const NAV = getNavItems(lang);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 80);
@@ -29,9 +26,22 @@ export function Navbar() {
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
-    if (ref.current) {
-      gsap.from(ref.current, { y: -20, opacity: 0, duration: 0.8, ease: "power3.out" });
-    }
+    const ctx = gsap.context(() => {
+      if (ref.current) {
+        gsap.fromTo(
+          ref.current,
+          { y: -20, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 0.8,
+            ease: "power3.out",
+            delay: 0.05,
+          }
+        );
+      }
+    });
+    return () => ctx.revert();
   }, []);
 
   return (
@@ -98,13 +108,35 @@ export function Navbar() {
               Open search →
             </Link>
           </div>
+          
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button {...linkCursor} className="text-xs font-semibold text-arc-text/80 transition hover:text-arc-accent uppercase px-3 py-1 border border-white/10 rounded-full">
+                {profile?.ui_language || 'EN'}
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="z-50 min-w-[120px] rounded-xl border border-white/10 bg-arc-surface-2 p-1 shadow-xl arc-glass" sideOffset={8}>
+                <DropdownMenu.Item onClick={() => updateSettings({ ui_language: 'en', tmdb_language: 'en-US' })} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text">
+                  English
+                </DropdownMenu.Item>
+                <DropdownMenu.Item onClick={() => updateSettings({ ui_language: 'ar', tmdb_language: 'ar-SA' })} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text">
+                  العربية
+                </DropdownMenu.Item>
+                <DropdownMenu.Item onClick={() => updateSettings({ ui_language: 'fr', tmdb_language: 'fr-FR' })} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text">
+                  Français
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
           <Link to="/" {...linkCursor} className="text-arc-text/80 hover:text-arc-text" aria-label="Notifications">
             <BellIcon />
           </Link>
-          <Link to="/" {...linkCursor} aria-label="Profile">
+          <Link to="/settings" {...linkCursor} aria-label="Profile">
             <div
               className="h-8 w-8 rounded-full border border-white/15"
-              style={{ background: avatarGradient("Alex") }}
+              style={{ background: avatarGradient(profile?.name || "User") }}
             />
           </Link>
         </div>

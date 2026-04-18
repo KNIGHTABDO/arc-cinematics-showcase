@@ -3,10 +3,10 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/r
 import appCss from "../styles.css?url";
 import { CursorProvider } from "@/lib/cursor-context";
 import { LenisProvider } from "@/lib/lenis";
-import { CustomCursor } from "@/components/cursor/CustomCursor";
 import { FilmGrain } from "@/components/layout/FilmGrain";
 import { CommandPalette } from "@/components/overlays/CommandPalette";
 import { IntroLoader } from "@/components/overlays/IntroLoader";
+import { SettingsProvider } from "@/lib/store/settings";
 
 function NotFoundComponent() {
   return (
@@ -71,14 +71,15 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   return (
-    <CursorProvider>
-      <LenisProvider>
-        <IntroLoader />
-        <FilmGrain />
-        <CustomCursor />
-        <CommandPalette />
-        <Outlet />
-      </LenisProvider>
-    </CursorProvider>
+    <SettingsProvider>
+      <CursorProvider>
+        <LenisProvider>
+          <IntroLoader />
+          <FilmGrain />
+          <CommandPalette />
+          <Outlet />
+        </LenisProvider>
+      </CursorProvider>
+    </SettingsProvider>
   );
 }

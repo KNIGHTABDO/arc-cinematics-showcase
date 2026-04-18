@@ -1,20 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { gsap, prefersReducedMotion } from "@/lib/gsap";
 import { Navbar } from "@/components/layout/Navbar";
 import { MovieCard } from "@/components/cards/MovieCard";
 import { Pill } from "@/components/ui/Pill";
-import { ALL_TITLES, TRENDING, NEW_ON_ARC } from "@/data/catalog";
+import { getPopularMovies, searchMovies } from "@/lib/server/tmdb";
+import type { TMDBMovie } from "@/components/cards/MovieCard";
 
 export const Route = createFileRoute("/search")({
   head: () => ({
     meta: [
       { title: "Search — ARC" },
-      { name: "description", content: "Find films, series, and shorts on ARC." },
-      { property: "og:title", content: "Search — ARC" },
-      { property: "og:description", content: "Find films, series, and shorts on ARC." },
     ],
   }),
+  loader: async () => {
+    // Top searches fallback
+    const top = await getPopularMovies();
+    return { top: top.slice(0, 10) };
+  },
   component: SearchPage,
 });
 
@@ -26,18 +29,25 @@ const PLACEHOLDERS = [
 ];
 
 function SearchPage() {
+  const { top } = Route.useLoaderData();
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [placeholder, setPlaceholder] = useState(PLACEHOLDERS[0]);
+  const [results, setResults] = useState<TMDBMovie[] | null>(null);
+  
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
     if (prefersReducedMotion()) return;
-    if (wrapRef.current) {
-      gsap.from(wrapRef.current, { scale: 0.95, opacity: 0, duration: 0.6, ease: "power3.out" });
-    }
+    
+    const ctx = gsap.context(() => {
+        if (wrapRef.current) {
+          gsap.fromTo(wrapRef.current, { scale: 0.95, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.6, ease: "power3.out" });
+        }
+    });
+    return () => ctx.revert();
   }, []);
 
   useEffect(() => {
@@ -54,17 +64,20 @@ function SearchPage() {
     return () => clearTimeout(id);
   }, [q]);
 
-  const results = useMemo(() => {
-    if (!debounced.trim()) return null;
-    const needle = debounced.toLowerCase();
-    return ALL_TITLES.filter(
-      (t) =>
-        t.title.toLowerCase().includes(needle) ||
-        t.genre.toLowerCase().includes(needle),
-    );
+  // Execute TMDB Search
+  useEffect(() => {
+    if (!debounced.trim()) {
+      setResults(null);
+      return;
+    }
+    
+    let active = true;
+    searchMovies({ data: debounced }).then((res: any) => {
+        if (active) setResults(res);
+    });
+    
+    return () => { active = false; };
   }, [debounced]);
-
-  const top = useMemo(() => [...TRENDING.slice(0, 4), ...NEW_ON_ARC.slice(0, 4)], []);
 
   return (
     <>
@@ -87,8 +100,8 @@ function SearchPage() {
             <>
               <h2 className="label-caps mb-5 text-arc-text/60">Top Searches</h2>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-                {top.map((t) => (
-                  <MovieCard key={t.id} title={t} width={240} />
+                {top.map((t: TMDBMovie) => (
+                  <MovieCard key={t.id} movie={t} width={240} />
                 ))}
               </div>
             </>
@@ -99,7 +112,7 @@ function SearchPage() {
               </div>
               <p className="mt-3 text-sm text-arc-muted">Try one of these instead</p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {["Drama", "Sci-Fi", "Documentary", "Thriller", "Romance"].map((s) => (
+                {["Inception", "Dune", "Interstellar", "Batman", "Romance"].map((s) => (
                   <Pill key={s} onClick={() => setQ(s)}>{s}</Pill>
                 ))}
               </div>
@@ -110,8 +123,8 @@ function SearchPage() {
                 {results.length} result{results.length !== 1 ? "s" : ""}
               </h2>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                {results.map((t) => (
-                  <MovieCard key={t.id} title={t} width={220} />
+                {results.map((t: TMDBMovie) => (
+                  <MovieCard key={t.id} movie={t} width={220} />
                 ))}
               </div>
             </>

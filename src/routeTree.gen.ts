@@ -9,16 +9,36 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SeriesRouteImport } from './routes/series'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as RegisterRouteImport } from './routes/register'
+import { Route as ProfilesRouteImport } from './routes/profiles'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as MyListRouteImport } from './routes/my-list'
+import { Route as MoviesRouteImport } from './routes/movies'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as DiscoverRouteImport } from './routes/discover'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WatchIdRouteImport } from './routes/watch.$id'
+import { Route as TvIdRouteImport } from './routes/tv.$id'
 import { Route as TitleIdRouteImport } from './routes/title.$id'
 
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SeriesRoute = SeriesRouteImport.update({
+  id: '/series',
+  path: '/series',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SearchRoute = SearchRouteImport.update({
@@ -26,9 +46,39 @@ const SearchRoute = SearchRouteImport.update({
   path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfilesRoute = ProfilesRouteImport.update({
+  id: '/profiles',
+  path: '/profiles',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MyListRoute = MyListRouteImport.update({
   id: '/my-list',
   path: '/my-list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MoviesRoute = MoviesRouteImport.update({
+  id: '/movies',
+  path: '/movies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DiscoverRoute = DiscoverRouteImport.update({
+  id: '/discover',
+  path: '/discover',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BrowseRoute = BrowseRouteImport.update({
@@ -41,6 +91,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WatchIdRoute = WatchIdRouteImport.update({
+  id: '/watch/$id',
+  path: '/watch/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TvIdRoute = TvIdRouteImport.update({
+  id: '/tv/$id',
+  path: '/tv/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TitleIdRoute = TitleIdRouteImport.update({
   id: '/title/$id',
   path: '/title/$id',
@@ -50,65 +110,155 @@ const TitleIdRoute = TitleIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
+  '/discover': typeof DiscoverRoute
+  '/login': typeof LoginRoute
+  '/movies': typeof MoviesRoute
   '/my-list': typeof MyListRoute
+  '/privacy': typeof PrivacyRoute
+  '/profiles': typeof ProfilesRoute
+  '/register': typeof RegisterRoute
   '/search': typeof SearchRoute
+  '/series': typeof SeriesRoute
   '/settings': typeof SettingsRoute
+  '/terms': typeof TermsRoute
   '/title/$id': typeof TitleIdRoute
+  '/tv/$id': typeof TvIdRoute
+  '/watch/$id': typeof WatchIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
+  '/discover': typeof DiscoverRoute
+  '/login': typeof LoginRoute
+  '/movies': typeof MoviesRoute
   '/my-list': typeof MyListRoute
+  '/privacy': typeof PrivacyRoute
+  '/profiles': typeof ProfilesRoute
+  '/register': typeof RegisterRoute
   '/search': typeof SearchRoute
+  '/series': typeof SeriesRoute
   '/settings': typeof SettingsRoute
+  '/terms': typeof TermsRoute
   '/title/$id': typeof TitleIdRoute
+  '/tv/$id': typeof TvIdRoute
+  '/watch/$id': typeof WatchIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
+  '/discover': typeof DiscoverRoute
+  '/login': typeof LoginRoute
+  '/movies': typeof MoviesRoute
   '/my-list': typeof MyListRoute
+  '/privacy': typeof PrivacyRoute
+  '/profiles': typeof ProfilesRoute
+  '/register': typeof RegisterRoute
   '/search': typeof SearchRoute
+  '/series': typeof SeriesRoute
   '/settings': typeof SettingsRoute
+  '/terms': typeof TermsRoute
   '/title/$id': typeof TitleIdRoute
+  '/tv/$id': typeof TvIdRoute
+  '/watch/$id': typeof WatchIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/browse'
+    | '/discover'
+    | '/login'
+    | '/movies'
     | '/my-list'
+    | '/privacy'
+    | '/profiles'
+    | '/register'
     | '/search'
+    | '/series'
     | '/settings'
+    | '/terms'
     | '/title/$id'
+    | '/tv/$id'
+    | '/watch/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/browse' | '/my-list' | '/search' | '/settings' | '/title/$id'
+  to:
+    | '/'
+    | '/browse'
+    | '/discover'
+    | '/login'
+    | '/movies'
+    | '/my-list'
+    | '/privacy'
+    | '/profiles'
+    | '/register'
+    | '/search'
+    | '/series'
+    | '/settings'
+    | '/terms'
+    | '/title/$id'
+    | '/tv/$id'
+    | '/watch/$id'
   id:
     | '__root__'
     | '/'
     | '/browse'
+    | '/discover'
+    | '/login'
+    | '/movies'
     | '/my-list'
+    | '/privacy'
+    | '/profiles'
+    | '/register'
     | '/search'
+    | '/series'
     | '/settings'
+    | '/terms'
     | '/title/$id'
+    | '/tv/$id'
+    | '/watch/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BrowseRoute: typeof BrowseRoute
+  DiscoverRoute: typeof DiscoverRoute
+  LoginRoute: typeof LoginRoute
+  MoviesRoute: typeof MoviesRoute
   MyListRoute: typeof MyListRoute
+  PrivacyRoute: typeof PrivacyRoute
+  ProfilesRoute: typeof ProfilesRoute
+  RegisterRoute: typeof RegisterRoute
   SearchRoute: typeof SearchRoute
+  SeriesRoute: typeof SeriesRoute
   SettingsRoute: typeof SettingsRoute
+  TermsRoute: typeof TermsRoute
   TitleIdRoute: typeof TitleIdRoute
+  TvIdRoute: typeof TvIdRoute
+  WatchIdRoute: typeof WatchIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/series': {
+      id: '/series'
+      path: '/series'
+      fullPath: '/series'
+      preLoaderRoute: typeof SeriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/search': {
@@ -118,11 +268,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profiles': {
+      id: '/profiles'
+      path: '/profiles'
+      fullPath: '/profiles'
+      preLoaderRoute: typeof ProfilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/my-list': {
       id: '/my-list'
       path: '/my-list'
       fullPath: '/my-list'
       preLoaderRoute: typeof MyListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/movies': {
+      id: '/movies'
+      path: '/movies'
+      fullPath: '/movies'
+      preLoaderRoute: typeof MoviesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/discover': {
+      id: '/discover'
+      path: '/discover'
+      fullPath: '/discover'
+      preLoaderRoute: typeof DiscoverRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/browse': {
@@ -139,6 +331,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/watch/$id': {
+      id: '/watch/$id'
+      path: '/watch/$id'
+      fullPath: '/watch/$id'
+      preLoaderRoute: typeof WatchIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tv/$id': {
+      id: '/tv/$id'
+      path: '/tv/$id'
+      fullPath: '/tv/$id'
+      preLoaderRoute: typeof TvIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/title/$id': {
       id: '/title/$id'
       path: '/title/$id'
@@ -152,11 +358,30 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BrowseRoute: BrowseRoute,
+  DiscoverRoute: DiscoverRoute,
+  LoginRoute: LoginRoute,
+  MoviesRoute: MoviesRoute,
   MyListRoute: MyListRoute,
+  PrivacyRoute: PrivacyRoute,
+  ProfilesRoute: ProfilesRoute,
+  RegisterRoute: RegisterRoute,
   SearchRoute: SearchRoute,
+  SeriesRoute: SeriesRoute,
   SettingsRoute: SettingsRoute,
+  TermsRoute: TermsRoute,
   TitleIdRoute: TitleIdRoute,
+  TvIdRoute: TvIdRoute,
+  WatchIdRoute: WatchIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

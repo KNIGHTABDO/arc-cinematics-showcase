@@ -1,123 +1,140 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import { gsap, prefersReducedMotion } from "@/lib/gsap";
 import { Navbar } from "@/components/layout/Navbar";
-import { MovieCard } from "@/components/cards/MovieCard";
-import { ACCLAIMED, BECAUSE_DUNE, NEW_ON_ARC } from "@/data/catalog";
-import { useCursorHover } from "@/lib/cursor-context";
-import { cn } from "@/lib/utils";
+import { MovieCard, type TMDBMovie } from "@/components/cards/MovieCard";
+import { supabase } from "@/lib/supabase";
+import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
+import { useSettings } from "@/lib/store/settings";
+import { t } from "@/lib/i18n";
 
 export const Route = createFileRoute("/my-list")({
   head: () => ({
     meta: [
       { title: "My List — ARC" },
-      { name: "description", content: "Your saved films and series on ARC." },
-      { property: "og:title", content: "My List — ARC" },
-      { property: "og:description", content: "Your saved films and series on ARC." },
     ],
   }),
   component: MyListPage,
 });
 
-const FILTERS = ["All", "Movies", "Series", "Watchlisted", "Downloaded"] as const;
-type Filter = (typeof FILTERS)[number];
-
 function MyListPage() {
-  const initial = [...ACCLAIMED.slice(0, 5), ...BECAUSE_DUNE.slice(0, 4), ...NEW_ON_ARC.slice(0, 3)];
-  const [items, setItems] = useState(initial);
-  const [filter, setFilter] = useState<Filter>("All");
-  const cursor = useCursorHover("link");
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [movies, setMovies] = useState<(TMDBMovie & { isTV?: boolean })[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { lang } = useSettings();
 
-  const remove = (id: string) => setItems((prev) => prev.filter((p) => p.id !== id));
+  const fetchItems = async (items: any[]) => {
+    const results = await Promise.all(items.map(async (fav) => {
+      try {
+        const tvMatch = fav.imdb_id.match(/^tv-(\d+)-s(\d+)e(\d+)$/);
+        const seriesMatch = fav.imdb_id.match(/^tv-(\d+)$/);
+        
+        if (tvMatch) {
+          const show = await getTVDetails({ data: tvMatch[1] });
+          if (!show) return null;
+          return {
+            ...show,
+            id: Number(tvMatch[1]), // Use numeric TMDB ID for routing
+            title: `${show.name} — S${tvMatch[2]}E${tvMatch[3]}`,
+            isTV: true,
+          } as any;
+        } else if (seriesMatch) {
+          const show = await getTVDetails({ data: seriesMatch[1] });
+          if (!show) return null;
+          return {
+            ...show,
+            id: Number(seriesMatch[1]), // Use numeric TMDB ID for routing
+            title: show.name,
+            isTV: true,
+          } as any;
+        }
+        
+        const movie = await getMovieDetails({ data: fav.imdb_id });
+        if (!movie) return null;
+        return movie as TMDBMovie;
+      } catch { return null; }
+    }));
+    return results.filter(Boolean) as (TMDBMovie & { isTV?: boolean })[];
+  };
+
+  // Fetch favorites from Supabase, then load each movie from TMDB
+  useEffect(() => {
+    const profileId = localStorage.getItem("arc_active_profile");
+    if (!profileId) { setLoading(false); return; }
+
+    supabase
+      .from("favorites")
+      .select("imdb_id")
+      .eq("profile_id", profileId)
+      .order("created_at", { ascending: false })
+      .then(async ({ data }) => {
+        if (!data || data.length === 0) { setLoading(false); return; }
+        const results = await fetchItems(data);
+        setMovies(results);
+        setLoading(false);
+      });
+
+    // Real-time subscription
+    const channel = supabase
+      .channel("favorites-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "favorites", filter: `profile_id=eq.${profileId}` }, () => {
+        // Re-fetch on any change
+        supabase.from("favorites").select("imdb_id").eq("profile_id", profileId).order("created_at", { ascending: false }).then(async ({ data }) => {
+          if (!data) return;
+          const results = await fetchItems(data);
+          setMovies(results);
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  useEffect(() => {
+    if (prefersReducedMotion() || movies.length === 0) return;
+    const ctx = gsap.context(() => {
+      if (wrapRef.current) {
+        gsap.fromTo(wrapRef.current.children,
+          { y: 40, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8, stagger: 0.05, ease: "power3.out" }
+        );
+      }
+    }, wrapRef);
+    return () => ctx.revert();
+  }, [movies]);
 
   return (
     <>
       <Navbar />
-      <main className="relative min-h-screen pt-28 pb-20">
+      <main className="relative min-h-screen pt-32 pb-20">
         <div className="mx-auto max-w-7xl px-[5vw]">
-          <div className="mb-2 flex items-baseline justify-between">
-            <h1 className="font-display text-4xl font-extrabold tracking-tight md:text-5xl">My List</h1>
-            <span className="label-caps text-arc-muted">{items.length} items</span>
-          </div>
-          <p className="text-sm text-arc-muted">Your collected stories — ready when you are.</p>
+          <h1 className="label-caps mb-8 text-arc-text/60">{t("myList.title", lang)}</h1>
 
-          <div className="mt-8 flex flex-wrap gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f}
-                {...cursor}
-                onClick={() => setFilter(f)}
-                className="relative rounded-full border border-white/10 px-4 py-1.5 text-xs font-medium tracking-wide focus-visible:outline-none"
-                style={{ color: filter === f ? "var(--arc-void)" : "var(--arc-text)" }}
-              >
-                {filter === f && (
-                  <motion.span
-                    layoutId="filter-pill"
-                    className="absolute inset-0 rounded-full bg-arc-accent"
-                    transition={{ type: "spring", stiffness: 500, damping: 38 }}
-                  />
-                )}
-                <span className="relative z-10">{f}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-10">
-            {items.length === 0 ? (
-              <EmptyState />
-            ) : (
-              <motion.div
-                layout
-                className={cn(
-                  "grid gap-4",
-                  "[grid-template-columns:repeat(auto-fill,minmax(160px,1fr))]",
-                  "md:[grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]",
-                )}
-              >
-                <AnimatePresence>
-                  {items.map((t) => (
-                    <motion.div
-                      key={t.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      <MovieCard title={t} width={undefined as unknown as number} onRemove={() => remove(t.id)} />
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </motion.div>
-            )}
-          </div>
+          {loading ? (
+            <div className="flex items-center justify-center pt-32">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-transparent border-t-arc-accent"></div>
+            </div>
+          ) : movies.length === 0 ? (
+            <div className="flex flex-col items-center justify-center pt-32 text-center">
+              <div className="font-display text-3xl font-extrabold text-arc-muted">
+                {t("myList.empty", lang)}
+              </div>
+              <p className="mt-3 text-sm text-arc-muted max-w-sm">
+                {t("myList.emptyDesc", lang)}
+              </p>
+              <Link to="/browse" className="mt-6 bg-arc-accent text-arc-void px-6 py-3 rounded-full font-bold text-sm hover:bg-white transition">
+                {t("myList.browse", lang)}
+              </Link>
+            </div>
+          ) : (
+            <div ref={wrapRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {movies.map((movie) => (
+                <MovieCard key={movie.id} movie={movie} width={220} linkPrefix={movie.isTV ? "/tv" : undefined} />
+              ))}
+            </div>
+          )}
         </div>
       </main>
     </>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-      <div className="relative mb-8">
-        <div className="h-32 w-32 rounded-full border border-white/10 bg-gradient-to-br from-white/5 to-transparent" />
-        <div
-          className="absolute inset-3 rounded-full"
-          style={{ background: "conic-gradient(var(--arc-accent), transparent 60%)", opacity: 0.5, filter: "blur(20px)" }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center text-3xl text-arc-text/50">＋</div>
-      </div>
-      <h2 className="font-display text-3xl font-extrabold tracking-tight">Your list is empty</h2>
-      <p className="mt-3 max-w-sm text-sm text-arc-muted">
-        Save films, series, and shorts you want to come back to. They'll all live here, organized your way.
-      </p>
-      <Link
-        to="/browse"
-        className="mt-6 inline-flex items-center justify-center rounded-full bg-arc-accent px-5 py-2.5 text-sm font-medium text-arc-void transition hover:bg-arc-accent/90"
-      >
-        Browse ARC
-      </Link>
-    </div>
   );
 }
