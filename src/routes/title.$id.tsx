@@ -115,15 +115,16 @@ function TitlePage() {
               </p>
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
-                <MagneticButton
-                  ref={playBtnRef as never}
-                  variant="primary"
-                  className="h-13 px-8"
-                  onClick={() => openTrailer(playBtnRef as React.RefObject<HTMLElement | null>)}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                  Play
-                </MagneticButton>
+                <div ref={playBtnRef as unknown as React.RefObject<HTMLDivElement>} className="contents">
+                  <MagneticButton
+                    variant="primary"
+                    className="h-13 px-8"
+                    onClick={() => openTrailer(playBtnRef as React.RefObject<HTMLElement | null>)}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                    Play
+                  </MagneticButton>
+                </div>
                 <MagneticButton variant="icon" aria-label="Add to list">＋</MagneticButton>
                 <MagneticButton variant="icon" aria-label="Like">👍</MagneticButton>
                 <MagneticButton variant="icon" aria-label="Dislike">👎</MagneticButton>
@@ -231,12 +232,19 @@ function TitlePage() {
             <Tabs.Content value="Trailers" className="pt-8">
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="group relative aspect-video overflow-hidden rounded-xl border border-white/[0.06]" style={{ background: gradientFor(title.seed + i) }}>
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-90">
-                      <span className="text-3xl">▶</span>
+                  <button
+                    key={i}
+                    ref={(el) => { trailerThumbRefs.current[i] = el as unknown as HTMLDivElement | null; }}
+                    onClick={() => openTrailer({ current: trailerThumbRefs.current[i] } as React.RefObject<HTMLElement | null>)}
+                    {...linkCursor}
+                    className="group relative aspect-video w-full overflow-hidden rounded-xl border border-white/[0.06] transition-all hover:border-arc-accent/40 hover:shadow-[0_18px_50px_-15px_var(--arc-glow)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arc-accent"
+                    style={{ background: gradientFor(title.seed + i) }}
+                  >
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-90 transition group-hover:bg-black/40">
+                      <span className="text-3xl text-white">▶</span>
                     </div>
                     <div className="absolute bottom-3 left-3 text-xs tracking-wide text-white/90">Trailer {i}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </Tabs.Content>
@@ -257,6 +265,12 @@ function TitlePage() {
           </div>
         </div>
       </main>
+      <TrailerModal
+        title={title}
+        open={trailerOpen}
+        onOpenChange={setTrailerOpen}
+        originRef={trailerOrigin}
+      />
     </>
   );
 }
