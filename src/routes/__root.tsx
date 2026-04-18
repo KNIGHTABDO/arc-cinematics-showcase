@@ -5,6 +5,8 @@ import { CursorProvider } from "@/lib/cursor-context";
 import { LenisProvider } from "@/lib/lenis";
 import { CustomCursor } from "@/components/cursor/CustomCursor";
 import { FilmGrain } from "@/components/layout/FilmGrain";
+import { CommandPalette } from "@/components/overlays/CommandPalette";
+import { IntroLoader } from "@/components/overlays/IntroLoader";
 
 function NotFoundComponent() {
   return (
@@ -71,8 +73,10 @@ function RootComponent() {
   return (
     <CursorProvider>
       <LenisProvider>
+        <IntroLoader />
         <FilmGrain />
         <CustomCursor />
+        <CommandPalette />
         <Outlet />
       </LenisProvider>
     </CursorProvider>
