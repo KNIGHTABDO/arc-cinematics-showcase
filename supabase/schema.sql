@@ -3,6 +3,7 @@
 
 -- Enable Row Level Security (RLS) Extensions
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 ---------------------------------------------------------------
 -- 1. PROFILES TABLE (Multi-profile Netflix style)

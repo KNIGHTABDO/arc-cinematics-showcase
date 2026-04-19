@@ -6,6 +6,7 @@ import {
   type RDTorrentFile,
   type StreamCandidate,
 } from "./stream-resolver-utils";
+import { logStreamResolverDiagnostics } from "./stream-telemetry";
 
 const RD_TOKEN = import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
@@ -31,7 +32,7 @@ type ResolveErrorCode =
   | "ALL_CANDIDATES_FAILED"
   | "UNKNOWN";
 
-interface ResolverAttempt {
+export interface ResolverAttempt {
   infoHash: string;
   title: string;
   score: number;
@@ -45,7 +46,7 @@ interface ResolverAttempt {
   preflight?: { ok: boolean; status?: number; contentType?: string | null };
 }
 
-interface ResolverDiagnostics {
+export interface ResolverDiagnostics {
   watchId: string;
   mediaType: MediaType;
   tmdbId: string;
@@ -464,9 +465,16 @@ async function resolveCandidate(
   }
 }
 
-function telemetryLog(diag: ResolverDiagnostics) {
-  // Persisted in provider logs (Vercel logs / function logs)
+async function telemetryLog(diag: ResolverDiagnostics) {
+  // Keep function logs for traceability.
   console.info("[ARC_STREAM_RESOLVER]", JSON.stringify(diag));
+
+  // Persist to Supabase telemetry table if env is configured.
+  try {
+    await logStreamResolverDiagnostics({ data: diag });
+  } catch (e) {
+    console.warn("[ARC_STREAM_TELEMETRY] failed to persist", e);
+  }
 }
 
 const inputSchema = z.string().min(1);
@@ -529,7 +537,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
           errorCode: "NO_CANDIDATES",
           error: `No RD+ candidates found for ${imdbId}`,
         });
-        telemetryLog(diagnostics);
+        await telemetryLog(diagnostics);
 
         return {
           errorCode: "NO_CANDIDATES" as ResolveErrorCode,
@@ -556,7 +564,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
             : undefined,
         };
 
-        telemetryLog(diagnostics);
+        await telemetryLog(diagnostics);
 
         return {
           streamUrl: resolved.streamUrl,
@@ -569,7 +577,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         };
       }
 
-      telemetryLog(diagnostics);
+      await telemetryLog(diagnostics);
 
       return {
         errorCode: "ALL_CANDIDATES_FAILED" as ResolveErrorCode,
@@ -592,7 +600,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         errorCode,
         error: message,
       });
-      telemetryLog(diagnostics);
+      await telemetryLog(diagnostics);
 
       return {
         errorCode,
