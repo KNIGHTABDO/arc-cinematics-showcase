@@ -20,7 +20,12 @@ export const Route = createFileRoute("/watch/$id")({
 function parseWatchId(id: string) {
   const tvMatch = id.match(/^tv-(\d+)-s(\d+)e(\d+)$/);
   if (tvMatch) {
-    return { type: "tv" as const, tmdbId: tvMatch[1], season: parseInt(tvMatch[2]), episode: parseInt(tvMatch[3]) };
+    return {
+      type: "tv" as const,
+      tmdbId: tvMatch[1],
+      season: parseInt(tvMatch[2]),
+      episode: parseInt(tvMatch[3]),
+    };
   }
   return { type: "movie" as const, tmdbId: id, season: undefined, episode: undefined };
 }
@@ -59,19 +64,28 @@ function WatchPage() {
       getTVDetails({ data: parsed.tmdbId }).then((show: any) => {
         const label = `${show?.name || "Show"} — S${parsed.season}E${parsed.episode}`;
         setTitle(label);
-        if (show?.backdrop_path) setBackdrop(`https://image.tmdb.org/t/p/w780${show.backdrop_path}`);
+        if (show?.backdrop_path)
+          setBackdrop(`https://image.tmdb.org/t/p/w780${show.backdrop_path}`);
       });
     } else {
       getMovieDetails({ data: parsed.tmdbId }).then((movie: any) => {
         if (movie?.title) setTitle(movie.title);
-        if (movie?.backdrop_path) setBackdrop(`https://image.tmdb.org/t/p/w780${movie.backdrop_path}`);
+        if (movie?.backdrop_path)
+          setBackdrop(`https://image.tmdb.org/t/p/w780${movie.backdrop_path}`);
       });
     }
 
     getStreamForMovie({ data: id })
       .then((res: any) => {
-        if (res.error) throw new Error(res.error);
-        if (res.streamUrl) setStreamUrl(res.streamUrl);
+        if (res.error || res.errorCode) {
+          const code = res.errorCode ? `[${res.errorCode}] ` : "";
+          throw new Error(`${code}${res.error || "Failed to locate stream."}`);
+        }
+        if (res.streamUrl) {
+          setStreamUrl(res.streamUrl);
+          return;
+        }
+        throw new Error("Resolver returned no stream URL.");
       })
       .catch((err: any) => {
         setError(err.message || "Failed to locate stream.");
@@ -83,9 +97,10 @@ function WatchPage() {
     const fetchSubs = async () => {
       try {
         // Get IMDB ID from the correct TMDB endpoint
-        const details = parsed.type === "tv"
-          ? await getTVDetails({ data: parsed.tmdbId })
-          : await getMovieDetails({ data: parsed.tmdbId });
+        const details =
+          parsed.type === "tv"
+            ? await getTVDetails({ data: parsed.tmdbId })
+            : await getMovieDetails({ data: parsed.tmdbId });
 
         const imdbId = details?.external_ids?.imdb_id || details?.imdb_id;
         if (!imdbId) return;
@@ -95,17 +110,22 @@ function WatchPage() {
 
         const res = await fetch(`https://api.subdl.com/auto?imdb_id=${imdbId}&type=movie`);
         if (!res.ok) return;
-        
+
         const data = await res.json().catch(() => ({}));
         if (data.subtitles && data.subtitles.length > 0) {
-          const tracks: SubtitleTrack[] = data.subtitles.slice(0, 15).map((s: any) => ({
-            label: s.language || s.lang || "Unknown",
-            lang: s.lang || "",
-            url: s.url || "",
-          })).filter((s: SubtitleTrack) => s.url);
+          const tracks: SubtitleTrack[] = data.subtitles
+            .slice(0, 15)
+            .map((s: any) => ({
+              label: s.language || s.lang || "Unknown",
+              lang: s.lang || "",
+              url: s.url || "",
+            }))
+            .filter((s: SubtitleTrack) => s.url);
           setSubtitles(tracks);
           if (profile?.subtitle_language) {
-            const preferred = tracks.find(s => s.lang.toLowerCase().includes(profile.subtitle_language.toLowerCase()));
+            const preferred = tracks.find((s) =>
+              s.lang.toLowerCase().includes(profile.subtitle_language.toLowerCase()),
+            );
             if (preferred) setActiveSub(preferred.url);
           }
         }
@@ -151,7 +171,7 @@ function WatchPage() {
           duration: parseFloat(v.duration.toFixed(3)),
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "profile_id,imdb_id" }
+        { onConflict: "profile_id,imdb_id" },
       );
       if (error) console.error("[ARC] watch_history save error:", error.message, error.details);
     };
@@ -190,7 +210,9 @@ function WatchPage() {
 
   useEffect(() => {
     resetControlsTimer();
-    return () => { if (controlsTimeout.current) clearTimeout(controlsTimeout.current); };
+    return () => {
+      if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+    };
   }, [playing, resetControlsTimer]);
 
   // Keyboard shortcuts
@@ -199,15 +221,44 @@ function WatchPage() {
       const v = videoRef.current;
       if (!v) return;
       switch (e.key) {
-        case " ": case "k": e.preventDefault(); v.paused ? v.play() : v.pause(); break;
-        case "f": e.preventDefault(); toggleFullscreen(); break;
-        case "m": e.preventDefault(); v.muted = !v.muted; setMuted(v.muted); break;
-        case "ArrowLeft": e.preventDefault(); v.currentTime -= 10; break;
-        case "ArrowRight": e.preventDefault(); v.currentTime += 10; break;
-        case "ArrowUp": e.preventDefault(); v.volume = Math.min(1, v.volume + 0.1); setVolume(v.volume); break;
-        case "ArrowUp": e.preventDefault(); v.volume = Math.min(1, v.volume + 0.1); setVolume(v.volume); break;
-        case "ArrowDown": e.preventDefault(); v.volume = Math.max(0, v.volume - 0.1); setVolume(v.volume); break;
-        case "Escape": 
+        case " ":
+        case "k":
+          e.preventDefault();
+          v.paused ? v.play() : v.pause();
+          break;
+        case "f":
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        case "m":
+          e.preventDefault();
+          v.muted = !v.muted;
+          setMuted(v.muted);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          v.currentTime -= 10;
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          v.currentTime += 10;
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          v.volume = Math.min(1, v.volume + 0.1);
+          setVolume(v.volume);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          v.volume = Math.min(1, v.volume + 0.1);
+          setVolume(v.volume);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          v.volume = Math.max(0, v.volume - 0.1);
+          setVolume(v.volume);
+          break;
+        case "Escape":
           if (parsed.type === "tv") {
             navigate({ to: "/tv/$id", params: { id: parsed.tmdbId.toString() } });
           } else {
@@ -254,7 +305,8 @@ function WatchPage() {
         <p className="mt-4 text-arc-muted max-w-md">{error}</p>
         <button
           onClick={() => {
-            if (parsed.type === "tv") navigate({ to: "/tv/$id", params: { id: parsed.tmdbId.toString() } });
+            if (parsed.type === "tv")
+              navigate({ to: "/tv/$id", params: { id: parsed.tmdbId.toString() } });
             else navigate({ to: "/title/$id", params: { id: parsed.tmdbId.toString() } });
           }}
           className="mt-8 rounded-full bg-arc-surface-2 px-6 py-3 font-semibold text-white transition hover:bg-arc-accent"
@@ -328,7 +380,9 @@ function WatchPage() {
       {/* Top Bar */}
       <div
         className={`absolute top-0 inset-x-0 z-50 px-6 py-4 flex items-center justify-between transition-all duration-500 ${
-          showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
+          showControls
+            ? "opacity-100 translate-y-0"
+            : "opacity-0 -translate-y-4 pointer-events-none"
         }`}
         style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.85), transparent)" }}
       >
@@ -342,7 +396,16 @@ function WatchPage() {
           }}
           className="flex items-center gap-2 text-white/80 hover:text-white transition text-sm font-medium"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
           Back
         </button>
         <h1 className="font-display text-base font-semibold text-white/90 drop-shadow-lg truncate max-w-[60%] text-center">
@@ -377,42 +440,138 @@ function WatchPage() {
           <div className="flex items-center gap-5">
             {/* Play/Pause */}
             <button
-              onClick={() => { const v = videoRef.current; if (v) v.paused ? v.play() : v.pause(); }}
+              onClick={() => {
+                const v = videoRef.current;
+                if (v) v.paused ? v.play() : v.pause();
+              }}
               className="text-white hover:text-arc-accent transition"
             >
               {playing ? (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
               ) : (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
               )}
             </button>
 
             {/* Skip -10s */}
-            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 10; }} className="text-white/70 hover:text-white transition">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><text x="12" y="16" textAnchor="middle" fill="currentColor" stroke="none" fontSize="8" fontWeight="bold">10</text></svg>
+            <button
+              onClick={() => {
+                if (videoRef.current) videoRef.current.currentTime -= 10;
+              }}
+              className="text-white/70 hover:text-white transition"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M1 4v6h6" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                <text
+                  x="12"
+                  y="16"
+                  textAnchor="middle"
+                  fill="currentColor"
+                  stroke="none"
+                  fontSize="8"
+                  fontWeight="bold"
+                >
+                  10
+                </text>
+              </svg>
             </button>
 
             {/* Skip +10s */}
-            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime += 10; }} className="text-white/70 hover:text-white transition">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="16" textAnchor="middle" fill="currentColor" stroke="none" fontSize="8" fontWeight="bold">10</text></svg>
+            <button
+              onClick={() => {
+                if (videoRef.current) videoRef.current.currentTime += 10;
+              }}
+              className="text-white/70 hover:text-white transition"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M23 4v6h-6" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                <text
+                  x="12"
+                  y="16"
+                  textAnchor="middle"
+                  fill="currentColor"
+                  stroke="none"
+                  fontSize="8"
+                  fontWeight="bold"
+                >
+                  10
+                </text>
+              </svg>
             </button>
 
             {/* Volume */}
             <div className="flex items-center gap-2">
-              <button onClick={() => { if (videoRef.current) { videoRef.current.muted = !videoRef.current.muted; setMuted(!muted); }}} className="text-white/70 hover:text-white transition">
+              <button
+                onClick={() => {
+                  if (videoRef.current) {
+                    videoRef.current.muted = !videoRef.current.muted;
+                    setMuted(!muted);
+                  }
+                }}
+                className="text-white/70 hover:text-white transition"
+              >
                 {muted || volume === 0 ? (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </svg>
                 ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  </svg>
                 )}
               </button>
               <input
-                type="range" min="0" max="1" step="0.05"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
                 value={muted ? 0 : volume}
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
-                  if (videoRef.current) { videoRef.current.volume = v; videoRef.current.muted = v === 0; }
-                  setVolume(v); setMuted(v === 0);
+                  if (videoRef.current) {
+                    videoRef.current.volume = v;
+                    videoRef.current.muted = v === 0;
+                  }
+                  setVolume(v);
+                  setMuted(v === 0);
                 }}
                 className="w-20 h-1 accent-[var(--arc-accent)] cursor-pointer"
               />
@@ -429,24 +588,51 @@ function WatchPage() {
             <div className="relative">
               <button
                 onClick={() => setShowSubMenu(!showSubMenu)}
-                className={`text-white/70 hover:text-white transition ${activeSub ? 'text-arc-accent' : ''}`}
+                className={`text-white/70 hover:text-white transition ${activeSub ? "text-arc-accent" : ""}`}
                 title="Subtitles"
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="14" x2="23" y2="14"/><text x="12" y="12" textAnchor="middle" fill="currentColor" stroke="none" fontSize="7" fontWeight="bold">CC</text></svg>
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <rect x="1" y="4" width="22" height="16" rx="2" />
+                  <line x1="1" y1="14" x2="23" y2="14" />
+                  <text
+                    x="12"
+                    y="12"
+                    textAnchor="middle"
+                    fill="currentColor"
+                    stroke="none"
+                    fontSize="7"
+                    fontWeight="bold"
+                  >
+                    CC
+                  </text>
+                </svg>
               </button>
               {showSubMenu && (
                 <div className="absolute bottom-full right-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[180px] max-h-[300px] overflow-y-auto backdrop-blur-xl">
                   <button
-                    onClick={() => { setActiveSub(null); setShowSubMenu(false); }}
-                    className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${!activeSub ? 'text-arc-accent bg-arc-accent/10' : 'text-white/70 hover:bg-white/5'}`}
+                    onClick={() => {
+                      setActiveSub(null);
+                      setShowSubMenu(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${!activeSub ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
                   >
                     {t("player.off", lang)}
                   </button>
                   {subtitles.map((sub, i) => (
                     <button
                       key={i}
-                      onClick={() => { setActiveSub(sub.url); setShowSubMenu(false); }}
-                      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${activeSub === sub.url ? 'text-arc-accent bg-arc-accent/10' : 'text-white/70 hover:bg-white/5'}`}
+                      onClick={() => {
+                        setActiveSub(sub.url);
+                        setShowSubMenu(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${activeSub === sub.url ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
                     >
                       {sub.label}
                     </button>
@@ -459,11 +645,32 @@ function WatchPage() {
             </div>
 
             {/* Fullscreen */}
-            <button onClick={toggleFullscreen} className="text-white/70 hover:text-white transition">
+            <button
+              onClick={toggleFullscreen}
+              className="text-white/70 hover:text-white transition"
+            >
               {fullscreen ? (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                </svg>
               ) : (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
               )}
             </button>
           </div>
