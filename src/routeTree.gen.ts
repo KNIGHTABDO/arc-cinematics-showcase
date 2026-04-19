@@ -19,6 +19,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as MyListRouteImport } from './routes/my-list'
 import { Route as MoviesRouteImport } from './routes/movies'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as DiscoverRouteImport } from './routes/discover'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as IndexRouteImport } from './routes/index'
@@ -76,6 +77,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DiscoverRoute = DiscoverRouteImport.update({
   id: '/discover',
   path: '/discover',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
   '/discover': typeof DiscoverRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/movies': typeof MoviesRoute
   '/my-list': typeof MyListRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
   '/discover': typeof DiscoverRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/movies': typeof MoviesRoute
   '/my-list': typeof MyListRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
   '/discover': typeof DiscoverRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/movies': typeof MoviesRoute
   '/my-list': typeof MyListRoute
@@ -168,6 +177,7 @@ export interface FileRouteTypes {
     | '/'
     | '/browse'
     | '/discover'
+    | '/history'
     | '/login'
     | '/movies'
     | '/my-list'
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
     | '/'
     | '/browse'
     | '/discover'
+    | '/history'
     | '/login'
     | '/movies'
     | '/my-list'
@@ -204,6 +215,7 @@ export interface FileRouteTypes {
     | '/'
     | '/browse'
     | '/discover'
+    | '/history'
     | '/login'
     | '/movies'
     | '/my-list'
@@ -223,6 +235,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BrowseRoute: typeof BrowseRoute
   DiscoverRoute: typeof DiscoverRoute
+  HistoryRoute: typeof HistoryRoute
   LoginRoute: typeof LoginRoute
   MoviesRoute: typeof MoviesRoute
   MyListRoute: typeof MyListRoute
@@ -310,6 +323,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/discover': {
       id: '/discover'
       path: '/discover'
@@ -359,6 +379,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BrowseRoute: BrowseRoute,
   DiscoverRoute: DiscoverRoute,
+  HistoryRoute: HistoryRoute,
   LoginRoute: LoginRoute,
   MoviesRoute: MoviesRoute,
   MyListRoute: MyListRoute,

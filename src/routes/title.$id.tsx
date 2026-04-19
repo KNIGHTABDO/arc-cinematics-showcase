@@ -49,6 +49,7 @@ function TitlePage() {
   const { movie, popular } = Route.useLoaderData();
   const [tab, setTab] = useState<Tab>("Overview");
   const [isFavorite, setIsFavorite] = useState(false);
+  const [watchProgress, setWatchProgress] = useState<{ progress: number; duration: number } | null>(null);
   const linkCursor = useCursorHover("link");
   const navigate = useNavigate();
   const { profile } = useSettings();
@@ -74,6 +75,26 @@ function TitlePage() {
       });
   }, [movie.id]);
 
+  // Check for existing watch progress
+  useEffect(() => {
+    const profileId = localStorage.getItem("arc_active_profile");
+    if (!profileId) return;
+    supabase
+      .from("watch_history")
+      .select("progress, duration")
+      .eq("profile_id", profileId)
+      .eq("imdb_id", movie.id.toString())
+      .eq("media_type", "movie")
+      .is("season", null)
+      .is("episode", null)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && data.progress > 10 && data.duration > 0) {
+          setWatchProgress({ progress: data.progress, duration: data.duration });
+        }
+      });
+  }, [movie.id]);
+
   const handleToggleFavorite = async () => {
     const profileId = localStorage.getItem("arc_active_profile");
     if (!profileId) return;
@@ -93,6 +114,8 @@ function TitlePage() {
       setIsFavorite(true);
     }
   };
+
+  const watchPct = watchProgress ? Math.min((watchProgress.progress / watchProgress.duration) * 100, 100) : 0;
 
   if (blockedForKids) {
     return (
@@ -182,9 +205,14 @@ function TitlePage() {
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link to="/watch/$id" params={{ id: movie.id.toString() }} className="contents">
-                  <MagneticButton variant="primary" className="h-13 px-8">
+                  <MagneticButton variant="primary" className="h-13 px-8 relative overflow-hidden">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                    Stream Now
+                    {watchProgress ? "Continue Watching" : "Stream Now"}
+                    {watchProgress && (
+                      <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/20">
+                        <span className="absolute left-0 top-0 h-full bg-arc-accent transition-all" style={{ width: `${watchPct}%` }} />
+                      </span>
+                    )}
                   </MagneticButton>
                 </Link>
                 <MagneticButton

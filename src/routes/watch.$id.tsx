@@ -5,6 +5,7 @@ import { getSubtitlesForMedia, getSubtitleVtt } from "@/lib/server/subtitles";
 import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
 import { supabase } from "@/lib/supabase";
 import { useSettings } from "@/lib/store/settings";
+import { useSubtitlesStore } from "@/lib/store/subtitles";
 import { t } from "@/lib/i18n";
 import { isMovieAllowedForKids, isTVAllowedForKids } from "@/lib/kids-content";
 
@@ -42,6 +43,7 @@ function WatchPage() {
   const parsed = parseWatchId(id);
 
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [streamFilename, setStreamFilename] = useState<string>("");
   const [backupStreams, setBackupStreams] = useState<string[]>([]);
   const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
   const [quality, setQuality] = useState<"auto" | "2160" | "1080" | "720" | "480">("auto");
@@ -62,9 +64,16 @@ function WatchPage() {
   const [activeSub, setActiveSub] = useState<string | null>(null);
   const [activeSubVttUrl, setActiveSubVttUrl] = useState<string | null>(null);
   const [showSubMenu, setShowSubMenu] = useState(false);
+  const [showSubSettings, setShowSubSettings] = useState(false);
+  const [offsetMs, setOffsetMs] = useState(0);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [hoverPosition, setHoverPosition] = useState<number | null>(null);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+
   const { lang, profile } = useSettings();
+  const subStore = useSubtitlesStore();
   const isKids = profile?.is_kids === true;
 
   // Fetch details (movie or TV) + stream
@@ -119,6 +128,7 @@ function WatchPage() {
 
         if (res.streamUrl) {
           setStreamUrl(res.streamUrl);
+          setStreamFilename(res.filename || "");
           setBackupStreams(Array.isArray(res.backupStreams) ? res.backupStreams : []);
           setCurrentStreamIndex(0);
           setStreamReady(false);
@@ -162,6 +172,7 @@ function WatchPage() {
             season: parsed.season,
             episode: parsed.episode,
             language: profile?.subtitle_language || undefined,
+            releaseName: streamFilename,
           },
         });
 
@@ -179,18 +190,20 @@ function WatchPage() {
 
         setSubtitles(tracks);
 
+        setSubtitles(tracks);
+
         if (tracks.length === 0) {
           setActiveSub(null);
           setActiveSubVttUrl(null);
           return;
         }
 
-        const preferred = profile?.subtitle_language
-          ? tracks.find((s) => s.lang.toLowerCase().includes(profile.subtitle_language.toLowerCase()))
-          : tracks[0];
-
-        if (preferred) {
-          setActiveSub(preferred.url);
+        // Auto-select best track (index 0 = highest score from backend)
+        const autoIdx = typeof result?.autoSelectIndex === "number" ? result.autoSelectIndex : 0;
+        if (autoIdx >= 0 && autoIdx < tracks.length) {
+          setActiveSub(tracks[autoIdx].url);
+        } else {
+          setActiveSub(tracks[0].url);
         }
       } catch (e) {
         console.warn("[ARC] Subtitle fetch failed:", e);
@@ -202,7 +215,7 @@ function WatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, profile?.subtitle_language]);
+  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, profile?.subtitle_language, streamFilename]);
 
   // Convert selected subtitle to VTT object URL for <track>
   useEffect(() => {
@@ -216,7 +229,7 @@ function WatchPage() {
       }
 
       try {
-        const result: any = await getSubtitleVtt({ data: { url: activeSub } });
+        const result: any = await getSubtitleVtt({ data: { url: activeSub, offsetMs } });
         if (cancelled) return;
 
         if (!result?.vtt) {
@@ -238,19 +251,48 @@ function WatchPage() {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [activeSub]);
+  }, [activeSub, offsetMs]);
+
+  // Keyboard shortcuts for subtitle sync
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "[") {
+        e.preventDefault();
+        setOffsetMs((o) => o - 500);
+      } else if (e.key === "]") {
+        e.preventDefault();
+        setOffsetMs((o) => o + 500);
+      } else if (e.key === "{" && e.shiftKey) {
+        e.preventDefault();
+        setOffsetMs((o) => o - 100);
+      } else if (e.key === "}" && e.shiftKey) {
+        e.preventDefault();
+        setOffsetMs((o) => o + 100);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   useEffect(() => {
     const profileId = localStorage.getItem("arc_active_profile");
     if (!profileId || !videoRef.current) return;
 
-    supabase
+    // Helper: PostgREST needs .is() for null, .eq() for values
+    let restoreQuery = supabase
       .from("watch_history")
       .select("progress")
       .eq("profile_id", profileId)
-      .eq("imdb_id", id)
-      .single()
-      .then(({ data }) => {
+      .eq("imdb_id", parsed.tmdbId)
+      .eq("media_type", parsed.type);
+
+    if (parsed.season) restoreQuery = restoreQuery.eq("season", parsed.season);
+    else restoreQuery = restoreQuery.is("season", null);
+
+    if (parsed.episode) restoreQuery = restoreQuery.eq("episode", parsed.episode);
+    else restoreQuery = restoreQuery.is("episode", null);
+
+    restoreQuery.maybeSingle().then(({ data }) => {
         if (data?.progress && videoRef.current) {
           videoRef.current.currentTime = data.progress;
         }
@@ -266,17 +308,49 @@ function WatchPage() {
       const v = videoRef.current;
       if (!v || v.duration === 0) return;
 
-      const { error } = await supabase.from("watch_history").upsert(
-        {
-          profile_id: profileId,
-          imdb_id: id,
-          progress: parseFloat(v.currentTime.toFixed(3)), // ms precision
-          duration: parseFloat(v.duration.toFixed(3)),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "profile_id,imdb_id" },
-      );
-      if (error) console.error("[ARC] watch_history save error:", error.message, error.details);
+      const payload = {
+        profile_id: profileId,
+        imdb_id: parsed.tmdbId,
+        media_type: parsed.type,
+        season: parsed.season || null,
+        episode: parsed.episode || null,
+        progress: parseFloat(v.currentTime.toFixed(3)),
+        duration: parseFloat(v.duration.toFixed(3)),
+        updated_at: new Date().toISOString(),
+      };
+
+      // Build query with proper null handling
+      let findQuery = supabase
+        .from("watch_history")
+        .select("id")
+        .eq("profile_id", profileId)
+        .eq("imdb_id", parsed.tmdbId)
+        .eq("media_type", parsed.type);
+
+      if (parsed.season) findQuery = findQuery.eq("season", parsed.season);
+      else findQuery = findQuery.is("season", null);
+
+      if (parsed.episode) findQuery = findQuery.eq("episode", parsed.episode);
+      else findQuery = findQuery.is("episode", null);
+
+      const { data } = await findQuery.maybeSingle();
+
+      let error;
+      if (data?.id) {
+        const { error: updateErr } = await supabase.from("watch_history").update({
+          progress: payload.progress,
+          duration: payload.duration,
+          updated_at: payload.updated_at
+        }).eq("id", data.id);
+        error = updateErr;
+      } else {
+        const { error: insertErr } = await supabase.from("watch_history").insert([payload]);
+        error = insertErr;
+      }
+      
+      if (error && error.code !== "23505") {
+        console.error("[ARC] watch_history save error:", error.message, error.details);
+      }
     };
 
     // Save every 1 second while playing
@@ -394,9 +468,24 @@ function WatchPage() {
   };
 
   const seekTo = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
+    if (!progressBarRef.current) return;
+    const rect = progressBarRef.current.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
     if (videoRef.current) videoRef.current.currentTime = pct * duration;
+  };
+
+  const handleProgressMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!progressBarRef.current || duration === 0) return;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const pct = pos / rect.width;
+    setHoverPosition(pos);
+    setHoverTime(pct * duration);
+  };
+
+  const handleProgressMouseLeave = () => {
+    setHoverPosition(null);
+    setHoverTime(null);
   };
 
   // === ERROR STATE ===
@@ -455,7 +544,6 @@ function WatchPage() {
         ref={videoRef}
         src={streamUrl}
         autoPlay
-        crossOrigin="anonymous"
         playsInline
         preload="metadata"
         className="h-full w-full object-contain"
@@ -500,16 +588,62 @@ function WatchPage() {
         )}
       </video>
 
+      {/* Touch overlay — tap to play/pause, double-tap to seek ±10s */}
+      <div
+        className="absolute inset-0 z-10"
+        onClick={(e) => {
+          // Don't interfere with controls
+          if ((e.target as HTMLElement).closest("[data-controls]")) return;
+          const v = videoRef.current;
+          if (v) v.paused ? v.play() : v.pause();
+          resetControlsTimer();
+        }}
+        onDoubleClick={(e) => {
+          const v = videoRef.current;
+          if (!v) return;
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          if (x < rect.width / 2) {
+            v.currentTime -= 10;
+          } else {
+            v.currentTime += 10;
+          }
+        }}
+      />
+
       {/* Buffering Overlay */}
       {(buffering || !streamReady) && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <div className="h-14 w-14 animate-spin rounded-full border-2 border-transparent border-t-arc-accent"></div>
         </div>
       )}
 
+      {/* Dynamic Subtitles Stylus */}
+      <style>
+        {`
+          video::cue {
+            color: ${subStore.subStyleColor};
+            font-size: ${subStore.subStyleSize};
+            background-color: ${subStore.subStyleBackground};
+            text-shadow: ${subStore.subStyleEdge};
+            font-family: inherit;
+          }
+          /* Safe area for notched phones */
+          @supports(padding: env(safe-area-inset-bottom)) {
+            .player-bottom-controls {
+              padding-bottom: calc(1rem + env(safe-area-inset-bottom)) !important;
+            }
+            .player-top-controls {
+              padding-top: calc(0.75rem + env(safe-area-inset-top)) !important;
+            }
+          }
+        `}
+      </style>
+
       {/* Top Bar */}
       <div
-        className={`absolute top-0 inset-x-0 z-50 px-6 py-4 flex items-center justify-between transition-all duration-500 ${
+        data-controls
+        className={`absolute top-0 inset-x-0 z-50 px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between transition-all duration-500 player-top-controls ${
           showControls
             ? "opacity-100 translate-y-0"
             : "opacity-0 -translate-y-4 pointer-events-none"
@@ -538,24 +672,50 @@ function WatchPage() {
           </svg>
           Back
         </button>
-        <h1 className="font-display text-base font-semibold text-white/90 drop-shadow-lg truncate max-w-[60%] text-center">
+        <h1 className="font-display text-xs sm:text-base font-semibold text-white/90 drop-shadow-lg truncate max-w-[50%] sm:max-w-[60%] text-center">
           {title}
         </h1>
-        <div className="w-16" /> {/* Spacer */}
+        <div className="w-8 sm:w-16" /> {/* Spacer */}
       </div>
 
       {/* Bottom Controls */}
       <div
-        className={`absolute bottom-0 inset-x-0 z-50 px-6 pb-6 pt-16 transition-all duration-500 ${
+        data-controls
+        className={`absolute bottom-0 inset-x-0 z-50 px-3 sm:px-6 pb-4 sm:pb-6 pt-12 sm:pt-16 transition-all duration-500 player-bottom-controls ${
           showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
         }`}
         style={{ background: "linear-gradient(to top, rgba(0,0,0,0.9), transparent)" }}
       >
         {/* Progress Bar */}
         <div
-          className="group relative w-full h-1.5 bg-white/20 rounded-full cursor-pointer mb-5 hover:h-2.5 transition-all"
+          ref={progressBarRef}
+          className="group relative w-full h-2 sm:h-1.5 bg-white/20 rounded-full cursor-pointer mb-3 sm:mb-5 hover:h-2.5 transition-all touch-none"
           onClick={seekTo}
+          onMouseMove={handleProgressMouseMove}
+          onMouseLeave={handleProgressMouseLeave}
+          onTouchMove={(e) => {
+            const touch = e.touches[0];
+            const bar = progressBarRef.current;
+            if (!bar || !videoRef.current) return;
+            const rect = bar.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+            videoRef.current.currentTime = pct * duration;
+          }}
         >
+          {hoverPosition !== null && hoverTime !== null && (
+            <div
+              className="absolute bottom-full mb-3 -translate-x-1/2 flex flex-col items-center pointer-events-none"
+              style={{ left: `${hoverPosition}px` }}
+            >
+              <div className="bg-arc-surface border border-white/10 rounded-lg px-2 py-1 shadow-2xl backdrop-blur-md">
+                <span className="text-white font-mono text-xs font-semibold tabular-nums tracking-wide shadow-black drop-shadow-md">
+                  {formatTime(hoverTime)}
+                </span>
+              </div>
+              <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-x-transparent border-t-arc-surface/90" />
+            </div>
+          )}
+
           <div
             className="absolute inset-y-0 left-0 rounded-full transition-all"
             style={{ width: `${progress}%`, background: "var(--arc-accent)" }}
@@ -567,7 +727,7 @@ function WatchPage() {
         </div>
 
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-5">
+          <div className="flex items-center gap-3 sm:gap-5">
             {/* Play/Pause */}
             <button
               onClick={() => {
@@ -577,12 +737,12 @@ function WatchPage() {
               className="text-white hover:text-arc-accent transition"
             >
               {playing ? (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="24" height="24" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
                   <rect x="6" y="4" width="4" height="16" rx="1" />
                   <rect x="14" y="4" width="4" height="16" rx="1" />
                 </svg>
               ) : (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="24" height="24" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               )}
@@ -593,7 +753,7 @@ function WatchPage() {
               onClick={() => {
                 if (videoRef.current) videoRef.current.currentTime -= 10;
               }}
-              className="text-white/70 hover:text-white transition"
+              className="text-white/70 hover:text-white transition hidden sm:block"
             >
               <svg
                 width="22"
@@ -624,7 +784,7 @@ function WatchPage() {
               onClick={() => {
                 if (videoRef.current) videoRef.current.currentTime += 10;
               }}
-              className="text-white/70 hover:text-white transition"
+              className="text-white/70 hover:text-white transition hidden sm:block"
             >
               <svg
                 width="22"
@@ -650,8 +810,8 @@ function WatchPage() {
               </svg>
             </button>
 
-            {/* Volume */}
-            <div className="flex items-center gap-2">
+            {/* Volume - hidden on mobile */}
+            <div className="hidden sm:flex items-center gap-2">
               <button
                 onClick={() => {
                   if (videoRef.current) {
@@ -708,7 +868,7 @@ function WatchPage() {
             </div>
 
             {/* Time */}
-            <span className="text-white/60 text-sm tabular font-mono">
+            <span className="text-white/60 text-[10px] sm:text-sm tabular font-mono">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
 
@@ -747,7 +907,7 @@ function WatchPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             {/* Subtitles */}
             <div className="relative">
               <button
@@ -778,35 +938,7 @@ function WatchPage() {
                   </text>
                 </svg>
               </button>
-              {showSubMenu && (
-                <div className="absolute bottom-full right-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[180px] max-h-[300px] overflow-y-auto backdrop-blur-xl">
-                  <button
-                    onClick={() => {
-                      setActiveSub(null);
-                      setActiveSubVttUrl(null);
-                      setShowSubMenu(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${!activeSub ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
-                  >
-                    {t("player.off", lang)}
-                  </button>
-                  {subtitles.map((sub, i) => (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setActiveSub(sub.url);
-                        setShowSubMenu(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${activeSub === sub.url ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
-                    >
-                      {sub.label}
-                    </button>
-                  ))}
-                  {subtitles.length === 0 && (
-                    <div className="px-3 py-2 text-xs text-arc-muted">No subtitles found</div>
-                  )}
-                </div>
-              )}
+              {/* Subtitle logic removed to root layout */}
             </div>
 
             {/* Fullscreen */}
@@ -841,6 +973,162 @@ function WatchPage() {
           </div>
         </div>
       </div>
+
+      {/* Subtitle Selector Modal (Root Level to explicitly bypass any local stacking contexts) */}
+      {showSubMenu && (
+        <div 
+          className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowSubMenu(false)}
+        >
+          <div 
+            className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-white/10 flex items-center justify-between shrink-0">
+              <h3 className="font-semibold text-white tracking-wide">Subtitles</h3>
+              <button onClick={() => setShowSubMenu(false)} className="text-white/50 hover:text-white">✕</button>
+            </div>
+
+            <div className="overflow-y-auto p-2 flex-1 overscroll-contain" style={{ touchAction: 'pan-y' }}>
+              <button
+                onClick={() => { setActiveSub(null); setActiveSubVttUrl(null); setShowSubMenu(false); }}
+                className={`w-full text-left px-3 py-3 text-sm rounded-xl transition mb-1 ${!activeSub ? "text-arc-accent flex items-center gap-2 bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
+              >
+                {!activeSub && <span className="w-1.5 h-1.5 rounded-full bg-arc-accent"></span>}
+                {t("player.off", lang)}
+              </button>
+
+              <div className="my-2 border-b border-white/5 mx-2"></div>
+
+              {subtitles.map((sub, i) => {
+                const isActive = activeSub === sub.url;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => { setActiveSub(sub.url); setShowSubMenu(false); }}
+                    className={`w-full text-left px-3 py-3 text-sm rounded-xl transition truncate mb-1 ${isActive ? "text-arc-accent flex items-center gap-2 bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
+                  >
+                    {isActive && <span className="w-1.5 h-1.5 rounded-full bg-arc-accent shrink-0"></span>}
+                    {sub.label}
+                  </button>
+                );
+              })}
+              {subtitles.length === 0 && (
+                <div className="px-3 py-4 text-sm text-arc-muted text-center italic">No subtitles found</div>
+              )}
+            </div>
+
+            <div className="p-2 border-t border-white/10 bg-black/40 rounded-b-2xl shrink-0">
+              <button
+                onClick={() => { setShowSubMenu(false); setShowSubSettings(true); }}
+                className="w-full text-left px-3 py-3 text-sm rounded-xl text-white/70 hover:text-white hover:bg-white/5 transition flex justify-between items-center"
+              >
+                Customize Appearance
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subtitle Settings Modal (Root Level) */}
+      {showSubSettings && (
+        <div 
+          className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowSubSettings(false)}
+        >
+          <div 
+            className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
+              <h3 className="font-semibold text-white">Subtitle Customizer</h3>
+              <button onClick={() => setShowSubSettings(false)} className="text-white/50 hover:text-white">✕</button>
+            </div>
+
+            <div className="overflow-y-auto p-4 space-y-4 text-sm flex-1 overscroll-contain" style={{ touchAction: 'pan-y' }}>
+              {/* Size */}
+              <div>
+                <label className="block text-white/60 mb-1 text-xs">Size</label>
+                <select 
+                  value={subStore.subStyleSize} 
+                  onChange={(e) => subStore.setSubStyleSize(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
+                >
+                  <option value="0.8em">Small</option>
+                  <option value="1em">Normal</option>
+                  <option value="1.2em">Large</option>
+                  <option value="1.5em">Extra Large</option>
+                </select>
+              </div>
+
+              {/* Color */}
+              <div>
+                <label className="block text-white/60 mb-1 text-xs">Color</label>
+                <select 
+                  value={subStore.subStyleColor} 
+                  onChange={(e) => subStore.setSubStyleColor(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
+                >
+                  <option value="white">White</option>
+                  <option value="yellow">Yellow</option>
+                  <option value="cyan">Cyan</option>
+                  <option value="#e2e8f0">Light Gray</option>
+                </select>
+              </div>
+
+              {/* Background */}
+              <div>
+                <label className="block text-white/60 mb-1 text-xs">Background</label>
+                <select 
+                  value={subStore.subStyleBackground} 
+                  onChange={(e) => subStore.setSubStyleBackground(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
+                >
+                  <option value="transparent">None</option>
+                  <option value="rgba(0,0,0,0.5)">Semi-Transparent</option>
+                  <option value="rgba(0,0,0,0.9)">Solid Black</option>
+                </select>
+              </div>
+
+              {/* Edge Style */}
+              <div>
+                <label className="block text-white/60 mb-1 text-xs">Edge Style</label>
+                <select 
+                  value={subStore.subStyleEdge} 
+                  onChange={(e) => subStore.setSubStyleEdge(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
+                >
+                  <option value="none">None</option>
+                  <option value="0px 1px 4px rgba(0,0,0,0.8), 0px 2px 12px rgba(0,0,0,0.8)">Drop Shadow</option>
+                  <option value="-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000">Outline</option>
+                </select>
+              </div>
+
+              <div className="pt-2 border-t border-white/10">
+                <label className="block text-white/60 mb-1 text-xs flex justify-between">
+                  <span>Timing Offset</span>
+                  <span className="tabular-nums font-mono text-arc-accent">{offsetMs > 0 ? "+" : ""}{offsetMs} ms</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setOffsetMs(o => o - 250)} className="bg-white/5 hover:bg-white/10 p-1 rounded min-w-8">-</button>
+                  <input 
+                    type="range" min="-5000" max="5000" step="50"
+                    value={offsetMs} onChange={e => setOffsetMs(Number(e.target.value))}
+                    className="w-full accent-arc-accent"
+                  />
+                  <button onClick={() => setOffsetMs(o => o + 250)} className="bg-white/5 hover:bg-white/10 p-1 rounded min-w-8">+</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -12,7 +12,7 @@ const RD_TOKEN = import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
 
 const RESOLVER_MAX_CANDIDATES = 5;
-const RESOLVER_POLL_ATTEMPTS = 25;
+const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
 const RESOLVER_POLL_DELAY_MS = 1800;
 const PREFLIGHT_TIMEOUT_MS = 3500;
 
@@ -372,7 +372,7 @@ async function resolveCandidate(
     for (let i = 0; i < RESOLVER_POLL_ATTEMPTS; i++) {
       const info = await getTorrentInfo(torrentId);
 
-      if (["error", "dead", "magnet_error", "virus"].includes(info?.status)) {
+      if (["error", "dead", "magnet_error", "virus"].includes(info?.status as string)) {
         attempt.errorCode = "RD_STATUS_FAIL";
         attempt.error = `RD status ${info?.status}`;
         attempt.endedAt = new Date().toISOString();
@@ -401,7 +401,7 @@ async function resolveCandidate(
       const unselected = files.length ? files.every((f) => (f.selected ?? 0) === 0) : true;
       const needsSelection =
         info?.status === "waiting_files_selection" ||
-        (["queued", "downloading"].includes(info?.status) && unselected);
+        (["queued", "downloading"].includes(info?.status as string) && unselected);
 
       if (needsSelection) {
         if (!selectedFile) {
@@ -419,7 +419,7 @@ async function resolveCandidate(
 
       if (
         ["magnet_conversion", "queued", "downloading", "compressing", "uploading"].includes(
-          info?.status,
+          info?.status as string,
         )
       ) {
         await sleep(RESOLVER_POLL_DELAY_MS);
@@ -432,7 +432,7 @@ async function resolveCandidate(
         let preferredLinkIdx = 0;
         if (selectedFile && Array.isArray(info.files)) {
           const selected = (info.files as RDTorrentFile[]).filter((f) => (f.selected ?? 0) === 1);
-          const idx = selected.findIndex((f) => f.id === selectedFile.id);
+          const idx = selected.findIndex((f) => f.id === selectedFile!.id);
           if (idx >= 0 && idx < info.links.length) preferredLinkIdx = idx;
         }
 
@@ -634,6 +634,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         return {
           streamUrl: resolved.streamUrl,
           backupStreams: resolved.backupStreams,
+          filename: resolved.selectedFile ? resolved.selectedFile.path.split('/').pop() : "",
           imdbId,
           mediaType: parsed.type,
           season: parsed.season,

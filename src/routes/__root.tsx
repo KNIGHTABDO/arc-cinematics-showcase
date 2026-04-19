@@ -1,4 +1,5 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { Outlet, Link, createRootRoute, HeadContent, Scripts, useRouterState, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import appCss from "../styles.css?url";
 import { CursorProvider } from "@/lib/cursor-context";
@@ -7,6 +8,26 @@ import { FilmGrain } from "@/components/layout/FilmGrain";
 import { CommandPalette } from "@/components/overlays/CommandPalette";
 import { IntroLoader } from "@/components/overlays/IntroLoader";
 import { SettingsProvider } from "@/lib/store/settings";
+import { useAuth } from "@/hooks/use-auth";
+
+const PUBLIC_ROUTES = ["/", "/login", "/register", "/privacy", "/terms"];
+
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { session, loading } = useAuth();
+  const navigate = useNavigate();
+  const state = useRouterState();
+
+  useEffect(() => {
+    if (!loading && !session && !PUBLIC_ROUTES.includes(state.location.pathname)) {
+      navigate({ to: "/login", replace: true });
+    }
+  }, [loading, session, state.location.pathname, navigate]);
+
+  if (loading) return null;
+  if (!session && !PUBLIC_ROUTES.includes(state.location.pathname)) return null;
+
+  return <>{children}</>;
+}
 
 function NotFoundComponent() {
   return (
@@ -77,7 +98,9 @@ function RootComponent() {
           <IntroLoader />
           <FilmGrain />
           <CommandPalette />
-          <Outlet />
+          <AuthGuard>
+            <Outlet />
+          </AuthGuard>
         </LenisProvider>
       </CursorProvider>
     </SettingsProvider>

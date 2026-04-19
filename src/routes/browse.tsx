@@ -229,37 +229,46 @@ function ContinueWatchingRow() {
   const { lang, profile } = useSettings();
 
   useEffect(() => {
-    const profileId = profile?.id || localStorage.getItem("arc_active_profile");
-    if (!profileId) return;
+    if (!profile?.id) return;
+    const profileId = profile.id;
 
     const loadHistory = async () => {
       const { data } = await supabase
         .from("watch_history")
-        .select("imdb_id, progress, duration")
+        .select("imdb_id, media_type, season, episode, progress, duration")
         .eq("profile_id", profileId)
         .order("updated_at", { ascending: false })
-        .limit(10);
+        .limit(30);
 
       if (!data || data.length === 0) return;
 
+      const grouped: typeof data = [];
+      const seenIds = new Set<string>();
+      
+      for (const row of data) {
+        if (row.media_type === "tv") {
+          if (seenIds.has(row.imdb_id)) continue;
+          seenIds.add(row.imdb_id);
+        }
+        grouped.push(row);
+        if (grouped.length >= 10) break;
+      }
+
       const results = await Promise.all(
-        data.map(async (entry) => {
+        grouped.map(async (entry) => {
           try {
-            const tvMatch = entry.imdb_id.match(/^tv-(\d+)-s(\d+)e(\d+)$/);
-            if (tvMatch) {
-              // TV episode
-              const show = await getTVDetails({ data: tvMatch[1] });
+            if (entry.media_type === "tv" && entry.season != null && entry.episode != null) {
+              const show = await getTVDetails({ data: entry.imdb_id });
               if (!show) return null;
               return {
-                id: entry.imdb_id,
-                watchId: entry.imdb_id,
-                title: `${show.name} — S${tvMatch[2]}E${tvMatch[3]}`,
+                id: `tv-${entry.imdb_id}-s${entry.season}e${entry.episode}`,
+                watchId: `tv-${entry.imdb_id}-s${entry.season}e${entry.episode}`,
+                title: `${show.name} — S${entry.season}E${entry.episode}`,
                 backdrop_path: show.backdrop_path,
                 progress: entry.progress,
                 duration: entry.duration,
               };
             } else {
-              // Movie
               const movie = await getMovieDetails({ data: entry.imdb_id });
               if (!movie) return null;
               return {

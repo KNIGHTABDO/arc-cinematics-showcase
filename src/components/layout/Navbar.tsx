@@ -133,12 +133,39 @@ export function Navbar() {
           <Link to="/" {...linkCursor} className="text-arc-text/80 hover:text-arc-text" aria-label="Notifications">
             <BellIcon />
           </Link>
-          <Link to="/settings" {...linkCursor} aria-label="Profile">
-            <div
-              className="h-8 w-8 rounded-full border border-white/15"
-              style={{ background: avatarGradient(profile?.name || "User") }}
-            />
-          </Link>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button {...linkCursor} aria-label="Profile">
+                <div
+                  className="h-8 w-8 rounded-full border border-white/15"
+                  style={{ background: avatarGradient(profile?.name || "User") }}
+                />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="z-50 min-w-[160px] rounded-xl border border-white/10 bg-arc-surface-2 p-1 shadow-xl arc-glass" sideOffset={8} align="end">
+                <Link to="/history" className="block focus:outline-none">
+                  <DropdownMenu.Item className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    Watch History
+                  </DropdownMenu.Item>
+                </Link>
+                <Link to="/settings" className="block focus:outline-none">
+                  <DropdownMenu.Item className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                    Settings
+                  </DropdownMenu.Item>
+                </Link>
+                <div className="my-1 h-px bg-white/10" />
+                <Link to="/profiles" className="block focus:outline-none">
+                  <DropdownMenu.Item className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    Switch Profile
+                  </DropdownMenu.Item>
+                </Link>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
       </div>
     </header>

@@ -3,6 +3,8 @@ import { useSettings } from "@/lib/store/settings";
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/Navbar";
+import { t } from "@/lib/i18n";
+import { supabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/settings")({
   component: SettingsPage,
@@ -29,17 +31,17 @@ function SettingsPage() {
       
       <div className="max-w-4xl mx-auto space-y-12">
         <div>
-          <h1 className="font-display text-4xl font-extrabold tracking-tight">Profile Settings</h1>
-          <p className="text-arc-muted mt-2">Manage preferences for {profile.name}'s viewing experience.</p>
+          <h1 className="font-display text-4xl font-extrabold tracking-tight">{t("settings.profileSettings", profile.ui_language)}</h1>
+          <p className="text-arc-muted mt-2">{t("settings.managePrefs", profile.ui_language)}{profile.name}.</p>
         </div>
 
         {/* Global Settings */}
         <section className="space-y-6 arc-card p-6 md:p-8">
-          <h2 className="font-display text-2xl font-bold">Localization</h2>
+          <h2 className="font-display text-2xl font-bold">{t("settings.localization", profile.ui_language)}</h2>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-3">
-              <label className="text-sm font-semibold text-arc-text/80">UI Language</label>
+              <label className="text-sm font-semibold text-arc-text/80">{t("settings.uiLanguage", profile.ui_language)}</label>
               <select 
                 className="w-full bg-arc-surface-2 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-arc-accent transition"
                 value={profile.ui_language}
@@ -52,7 +54,7 @@ function SettingsPage() {
             </div>
 
             <div className="space-y-3">
-              <label className="text-sm font-semibold text-arc-text/80">Default Subtitles (Real-Debrid)</label>
+              <label className="text-sm font-semibold text-arc-text/80">{t("settings.defaultSubs", profile.ui_language)}</label>
               <select 
                 className="w-full bg-arc-surface-2 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-arc-accent transition"
                 value={profile.subtitle_language}
@@ -87,12 +89,63 @@ function SettingsPage() {
           </div>
         </section>
 
+        {/* Account Management */}
+        <section className="space-y-6 arc-card p-6 md:p-8 border border-red-500/20">
+          <h2 className="font-display text-2xl font-bold text-red-400">{t("settings.accountManagement", profile.ui_language)}</h2>
+          <p className="text-sm text-arc-text/70 mb-4">{t("settings.accountManagementDesc", profile.ui_language)}</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
+            <div className="space-y-3">
+              <label className="text-sm font-semibold text-arc-text/80 leading-none">{t("settings.newPassword", profile.ui_language)}</label>
+              <div className="flex gap-2">
+                <input 
+                  type="password"
+                  id="new_password"
+                  placeholder={t("settings.enterNewPassword", profile.ui_language)}
+                  className="w-full bg-arc-surface-2 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-arc-accent transition text-white placeholder-white/30"
+                />
+                <button 
+                  onClick={async () => {
+                    const el = document.getElementById("new_password") as HTMLInputElement;
+                    if (!el.value) return;
+                    const { error } = await supabase.auth.updateUser({ password: el.value });
+                    if (error) alert(t("settings.errorUpdatePass", profile.ui_language) + error.message);
+                    else { alert(t("settings.passUpdated", profile.ui_language)); el.value = ""; }
+                  }}
+                  className="bg-white/10 px-4 py-3 rounded-lg hover:bg-white/20 transition whitespace-nowrap text-sm font-semibold text-white/90"
+                >
+                  {t("settings.update", profile.ui_language)}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button 
+                onClick={async () => {
+                  if (confirm(t("settings.deleteConfirm", profile.ui_language))) {
+                    const { error } = await supabase.rpc('delete_user');
+                    if (error) {
+                      alert(t("settings.errorDelete", profile.ui_language) + error.message);
+                    } else {
+                      await supabase.auth.signOut();
+                      window.location.href = "/login";
+                    }
+                  }
+                }}
+                className="w-full bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg px-4 py-3 hover:bg-red-500/20 transition font-semibold"
+              >
+                {t("settings.deleteAccount", profile.ui_language)}
+              </button>
+            </div>
+          </div>
+        </section>
+
         {/* Application Theme */}
         <section className="space-y-6 arc-card p-6 md:p-8">
-          <h2 className="font-display text-2xl font-bold">Aesthetics</h2>
+          <h2 className="font-display text-2xl font-bold">{t("settings.aesthetics", profile.ui_language)}</h2>
           
           <div className="space-y-4">
-             <label className="text-sm font-semibold text-arc-text/80">Theme Accent Color</label>
+             <label className="text-sm font-semibold text-arc-text/80">{t("settings.themeAccent", profile.ui_language)}</label>
              <div className="flex flex-wrap gap-4">
                 {DEFAULT_COLORS.map(c => (
                   <button
@@ -110,10 +163,10 @@ function SettingsPage() {
         {/* Profile Action */}
         <div className="flex justify-between items-center pt-8 border-t border-white/10">
            <button onClick={() => navigate({ to: "/profiles" })} className="text-arc-muted hover:text-white transition">
-             Switch Profile
+             {t("settings.switchProfile", profile.ui_language)}
            </button>
            <button onClick={() => navigate({ to: "/browse" })} className="bg-arc-accent text-arc-void px-8 py-3 rounded-full font-bold hover:bg-white transition">
-             Done
+             {t("settings.done", profile.ui_language)}
            </button>
         </div>
 

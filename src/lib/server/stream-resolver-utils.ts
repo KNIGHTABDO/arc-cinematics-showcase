@@ -59,6 +59,21 @@ export function scoreCandidate(
   if (text.includes("web dl") || text.includes("web-dl") || text.includes("webrip")) score += 8;
   if (text.includes("bluray") || text.includes("bdrip") || text.includes("remux")) score += 10;
 
+  // Audio compatibility logic: Browsers cannot play DDP5.1 / EAC3 / DTS / TrueHD
+  if (
+    text.includes("ddp") || 
+    text.includes("eac3") || 
+    text.includes("dts") || 
+    text.includes("truehd") || 
+    text.includes("atmos") ||
+    text.includes("flac")
+  ) {
+    score -= 1000;
+  }
+  if (text.includes("aac") || text.includes("ac3") || text.includes("2 0") || text.includes("mp4")) {
+    score += 500;
+  }
+
   // Browser compatibility preference (web player first, Stremio-like reliability in browser context)
   if (text.includes("x264") || text.includes("h264") || text.includes("avc")) score += 26;
   if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 85;
@@ -142,14 +157,15 @@ export function chooseTargetFile(
   const pool = videoFiles.length ? videoFiles : files;
 
   if (opts.preferredFileIdx != null) {
+    const prefIdx = opts.preferredFileIdx;
     // Stremio fileIdx semantics can vary by source; try multiple mappings
-    const byArrayIndex = pool[opts.preferredFileIdx];
+    const byArrayIndex = pool[prefIdx];
     if (byArrayIndex) return byArrayIndex;
 
-    const byIdExact = pool.find((f) => f.id === opts.preferredFileIdx);
+    const byIdExact = pool.find((f) => f.id === prefIdx);
     if (byIdExact) return byIdExact;
 
-    const byIdPlusOne = pool.find((f) => f.id === opts.preferredFileIdx + 1);
+    const byIdPlusOne = pool.find((f) => f.id === prefIdx + 1);
     if (byIdPlusOne) return byIdPlusOne;
   }
 

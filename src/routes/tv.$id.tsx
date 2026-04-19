@@ -44,6 +44,7 @@ function TVDetailPage() {
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [loadingEps, setLoadingEps] = useState(false);
   const [inList, setInList] = useState(false);
+  const [lastWatched, setLastWatched] = useState<{ season: number; episode: number; progress: number; duration: number } | null>(null);
   const isKids = profile?.is_kids === true;
   const blockedForKids = isKids && show && !isTVAllowedForKids(show);
 
@@ -80,6 +81,26 @@ function TVDetailPage() {
       .then(({ data }) => setInList(!!data));
   }, [id]);
 
+  // Check for last watched episode
+  useEffect(() => {
+    const profileId = localStorage.getItem("arc_active_profile");
+    if (!profileId) return;
+    supabase
+      .from("watch_history")
+      .select("season, episode, progress, duration")
+      .eq("profile_id", profileId)
+      .eq("imdb_id", id)
+      .eq("media_type", "tv")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && data.season && data.episode && data.progress > 10) {
+          setLastWatched({ season: data.season, episode: data.episode, progress: data.progress, duration: data.duration });
+        }
+      });
+  }, [id]);
+
   const toggleFavorite = async () => {
     const profileId = localStorage.getItem("arc_active_profile");
     if (!profileId) return;
@@ -91,6 +112,14 @@ function TVDetailPage() {
       setInList(true);
     }
   };
+
+  const lastWatchedPct = lastWatched ? Math.min((lastWatched.progress / lastWatched.duration) * 100, 100) : 0;
+  const heroWatchId = lastWatched
+    ? `tv-${id}-s${lastWatched.season}e${lastWatched.episode}`
+    : `tv-${id}-s${selectedSeason}e1`;
+  const heroButtonText = lastWatched
+    ? `Continue S${lastWatched.season}E${lastWatched.episode}`
+    : t("hero.playNow", lang);
 
   if (!show) {
     return (
@@ -156,10 +185,15 @@ function TVDetailPage() {
 
             <div className="mt-6 flex items-center gap-3">
               {episodes.length > 0 && (
-                <Link to="/watch/$id" params={{ id: `tv-${id}-s${selectedSeason}e1` }}>
-                  <MagneticButton variant="primary">
+                <Link to="/watch/$id" params={{ id: heroWatchId }}>
+                  <MagneticButton variant="primary" className="relative overflow-hidden">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                    {t("hero.playNow", lang)}
+                    {heroButtonText}
+                    {lastWatched && (
+                      <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/20">
+                        <span className="absolute left-0 top-0 h-full bg-arc-accent transition-all" style={{ width: `${lastWatchedPct}%` }} />
+                      </span>
+                    )}
                   </MagneticButton>
                 </Link>
               )}
