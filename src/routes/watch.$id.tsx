@@ -545,6 +545,9 @@ function WatchPage() {
         src={streamUrl}
         autoPlay
         playsInline
+        // @ts-ignore — webkit vendor attributes for older iOS
+        webkit-playsinline=""
+        x-webkit-airplay="deny"
         preload="metadata"
         className="h-full w-full object-contain"
         onPlay={() => setPlaying(true)}
@@ -566,6 +569,11 @@ function WatchPage() {
           if (v) v.paused ? v.play() : v.pause();
         }}
         onError={() => {
+          const v = videoRef.current;
+          const mediaError = v?.error;
+          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+          // Try backup streams first
           const next = backupStreams[currentStreamIndex];
           if (next) {
             setCurrentStreamIndex((idx) => idx + 1);
@@ -574,6 +582,19 @@ function WatchPage() {
             setStreamUrl(next);
             return;
           }
+
+          // iOS-specific error messaging
+          if (isIOS && mediaError) {
+            const code = mediaError.code;
+            if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+              setError(
+                "This stream format is not compatible with your device. " +
+                "iOS only supports MP4 video files. Try a different title or quality setting."
+              );
+              return;
+            }
+          }
+
           setError("Playback failed for this stream URL.");
         }}
       >

@@ -335,7 +335,7 @@ async function deleteTorrentBestEffort(torrentId: string): Promise<void> {
 
 async function resolveCandidate(
   candidate: StreamCandidate & { score: number },
-  media: { type: MediaType; season?: number; episode?: number },
+  media: { type: MediaType; season?: number; episode?: number; clientProfile?: "default" | "ios_safari" },
   diagnostics: ResolverDiagnostics,
 ): Promise<{
   streamUrl: string;
@@ -387,6 +387,7 @@ async function resolveCandidate(
           season: media.season,
           episode: media.episode,
           preferredFileIdx: candidate.fileIdx,
+          clientProfile: media.clientProfile,
         });
 
         if (selectedFile) {
@@ -614,7 +615,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       }
 
       for (const candidate of ranked) {
-        const resolved = await resolveCandidate(candidate, parsed, diagnostics);
+        const resolved = await resolveCandidate(candidate, { ...parsed, clientProfile }, diagnostics);
         if (!resolved) continue;
 
         diagnostics.selected = {

@@ -79,12 +79,15 @@ export function scoreCandidate(
   if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 85;
   if (text.includes("hdr") || text.includes("dv") || text.includes("dolby vision")) score -= 22;
 
-  // iOS Safari profile: heavily deprioritize MKV/matroska, boost MP4/M4V
+  // iOS Safari profile: effectively filter out non-MP4 containers
+  // iOS cannot play MKV, WebM, or AVI — only MP4/M4V/MOV containers work
   if (opts.clientProfile === "ios_safari") {
+    const isMp4 = /\bmp4\b|\bm4v\b|\bmov\b/i.test(candidate.title);
     const isMkv = /\bmkv\b|\bmatroska\b/i.test(candidate.title);
-    const isMp4 = /\bmp4\b|\bm4v\b/i.test(candidate.title);
-    if (isMkv) score -= 150;
-    if (isMp4) score += 50;
+    const isWebm = /\bwebm\b/i.test(candidate.title);
+    const isAvi = /\bavi\b/i.test(candidate.title);
+    if (isMp4) score += 200;
+    if (isMkv || isWebm || isAvi) score -= 5000; // effectively filter out
   }
 
   // Penalize bad sources
@@ -149,11 +152,25 @@ export function rankCandidates(
 
 export function chooseTargetFile(
   files: RDTorrentFile[],
-  opts: { type: "movie" | "tv"; season?: number; episode?: number; preferredFileIdx?: number },
+  opts: { type: "movie" | "tv"; season?: number; episode?: number; preferredFileIdx?: number; clientProfile?: "default" | "ios_safari" },
 ): RDTorrentFile | null {
   if (!files?.length) return null;
 
-  const videoFiles = files.filter((f) => isLikelyVideoFile(f.path));
+  let videoFiles = files.filter((f) => isLikelyVideoFile(f.path));
+
+  // iOS Safari: filter to MP4/M4V/MOV only — iOS cannot play MKV/WebM/AVI
+  if (opts.clientProfile === "ios_safari") {
+    const iosCompatible = videoFiles.filter((f) => {
+      const p = (f.path || "").toLowerCase();
+      return p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov");
+    });
+    if (iosCompatible.length > 0) {
+      videoFiles = iosCompatible;
+    }
+    // If no MP4 files exist, fall through to all video files — the player
+    // will show an error but at least we tried
+  }
+
   const pool = videoFiles.length ? videoFiles : files;
 
   if (opts.preferredFileIdx != null) {
@@ -171,7 +188,11 @@ export function chooseTargetFile(
 
   const containerRank = (path: string) => {
     const p = (path || "").toLowerCase();
-    if (p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov")) return 3;
+    if (p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov")) return 10;
+    if (opts.clientProfile === "ios_safari") {
+      // On iOS, anything non-MP4 is essentially unplayable
+      return -1;
+    }
     if (p.endsWith(".webm") || p.endsWith(".ts")) return 2;
     if (p.endsWith(".mkv")) return 1;
     return 0;
