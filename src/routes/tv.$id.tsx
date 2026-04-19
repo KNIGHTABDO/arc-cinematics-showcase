@@ -7,6 +7,7 @@ import { getTVDetails, getSeasonDetails } from "@/lib/server/tmdb";
 import { supabase } from "@/lib/supabase";
 import { useSettings } from "@/lib/store/settings";
 import { t } from "@/lib/i18n";
+import { isTVAllowedForKids } from "@/lib/kids-content";
 
 export const Route = createFileRoute("/tv/$id")({
   head: () => ({ meta: [{ title: "Series — ARC" }] }),
@@ -43,6 +44,8 @@ function TVDetailPage() {
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [loadingEps, setLoadingEps] = useState(false);
   const [inList, setInList] = useState(false);
+  const isKids = profile?.is_kids === true;
+  const blockedForKids = isKids && show && !isTVAllowedForKids(show);
 
   // Fetch show details
   useEffect(() => {
@@ -102,6 +105,28 @@ function TVDetailPage() {
 
   const seasons: Season[] = show.seasons?.filter((s: Season) => s.season_number >= 1) || [];
   const cast = show.credits?.cast?.slice(0, 8) || [];
+
+  if (blockedForKids) {
+    return (
+      <>
+        <Navbar />
+        <main className="flex min-h-screen items-center justify-center bg-arc-void px-6 text-center">
+          <div className="max-w-md">
+            <h1 className="font-display text-3xl font-extrabold text-arc-text">Content restricted</h1>
+            <p className="mt-4 text-sm text-arc-muted">
+              This title is not available on kids profiles.
+            </p>
+            <button
+              onClick={() => navigate({ to: "/browse" })}
+              className="mt-6 rounded-full bg-arc-accent px-6 py-3 text-sm font-semibold text-arc-void"
+            >
+              Back to Browse
+            </button>
+          </div>
+        </main>
+      </>
+    );
+  }
 
   return (
     <>

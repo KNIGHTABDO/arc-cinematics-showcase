@@ -10,6 +10,8 @@ import { MovieCard } from "@/components/cards/MovieCard";
 import { useCursorHover } from "@/lib/cursor-context";
 import { getMovieDetails, getPopularMovies } from "@/lib/server/tmdb";
 import { supabase } from "@/lib/supabase";
+import { useSettings } from "@/lib/store/settings";
+import { isMovieAllowedForKids } from "@/lib/kids-content";
 
 export const Route = createFileRoute("/title/$id")({
   loader: async ({ params }) => {
@@ -49,6 +51,9 @@ function TitlePage() {
   const [isFavorite, setIsFavorite] = useState(false);
   const linkCursor = useCursorHover("link");
   const navigate = useNavigate();
+  const { profile } = useSettings();
+  const isKids = profile?.is_kids === true;
+  const blockedForKids = isKids && !isMovieAllowedForKids(movie);
 
   const releaseYear = movie.release_date?.substring(0, 4) || "Unknown";
   const duration = movie.runtime ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m` : "Unknown";
@@ -88,6 +93,28 @@ function TitlePage() {
       setIsFavorite(true);
     }
   };
+
+  if (blockedForKids) {
+    return (
+      <>
+        <Navbar />
+        <main className="flex min-h-screen items-center justify-center bg-arc-void px-6 text-center">
+          <div className="max-w-md">
+            <h1 className="font-display text-3xl font-extrabold text-arc-text">Content restricted</h1>
+            <p className="mt-4 text-sm text-arc-muted">
+              This title is not available on kids profiles.
+            </p>
+            <button
+              onClick={() => navigate({ to: "/browse" })}
+              className="mt-6 rounded-full bg-arc-accent px-6 py-3 text-sm font-semibold text-arc-void"
+            >
+              Back to Browse
+            </button>
+          </div>
+        </main>
+      </>
+    );
+  }
 
   return (
     <>

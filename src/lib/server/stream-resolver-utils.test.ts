@@ -52,4 +52,26 @@ describe("stream resolver utilities", () => {
     const picked = chooseTargetFile(files, { type: "movie" });
     assert.equal(picked?.id, 2);
   });
+
+  it("chooseTargetFile prefers preferredFileIdx mappings before episode fallback", () => {
+    const files: RDTorrentFile[] = [
+      { id: 10, path: "/Show.S01E01.mkv", bytes: 1_100_000_000 },
+      { id: 11, path: "/Show.S01E02.mkv", bytes: 1_100_000_000 },
+      { id: 12, path: "/Show.S01E03.mkv", bytes: 1_100_000_000 },
+    ];
+
+    const byIndex = chooseTargetFile(files, { type: "tv", season: 1, episode: 3, preferredFileIdx: 1 });
+    assert.equal(byIndex?.id, 11);
+
+    const byId = chooseTargetFile(files, { type: "tv", season: 1, episode: 3, preferredFileIdx: 12 });
+    assert.equal(byId?.id, 12);
+
+    const byIdPlusOne = chooseTargetFile(files, {
+      type: "tv",
+      season: 1,
+      episode: 3,
+      preferredFileIdx: 11,
+    });
+    assert.equal(byIdPlusOne?.id, 11);
+  });
 });

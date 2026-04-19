@@ -159,7 +159,7 @@ export const getMovieDetails = createServerFn({ method: "GET" })
   .handler(async ({ data: id }) => {
     try {
       const data = await tmdbFetch(`/movie/${id}`, {
-        append_to_response: "images,credits,videos,external_ids",
+        append_to_response: "images,credits,videos,external_ids,release_dates",
       });
 
       // Fallback: if overview is missing in selected lang, try English
@@ -180,7 +180,7 @@ export const getTVDetails = createServerFn({ method: "GET" })
   .handler(async ({ data: id }) => {
     try {
       const data = await tmdbFetch(`/tv/${id}`, {
-        append_to_response: "images,credits,videos,external_ids",
+        append_to_response: "images,credits,videos,external_ids,content_ratings",
       });
 
       if (!data.overview || data.overview === "") {
@@ -202,51 +202,88 @@ export const getSeasonDetails = createServerFn({ method: "GET" })
   });
 
 // Generic discover endpoint for filtered browsing
+const discoverInput = z.object({
+  language: z.string().optional(),
+  genre: z.string().optional(),
+  sort: z.string().optional(),
+  page: z.string().optional(),
+  kidsOnly: z.boolean().optional(),
+});
+
+const KIDS_MOVIE_GENRES = new Set([16, 10751]); // Animation, Family
+const KIDS_TV_GENRES = new Set([16, 10762]); // Animation, Kids
+
+function parseGenreIds(raw?: string): number[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((value) => Number.isFinite(value));
+}
+
 export const discoverMovies = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => z.object({
-    language: z.string().optional(),
-    genre: z.string().optional(),
-    sort: z.string().optional(),
-    page: z.string().optional(),
-  }).parse(d))
+  .inputValidator((d: unknown) => discoverInput.parse(d))
   .handler(async ({ data }) => {
     const params: Record<string, string> = {
       language: data.language || _defaultLang,
       sort_by: data.sort || "popularity.desc",
       page: data.page || "1",
+      include_adult: "false",
     };
-    if (data.genre) params.with_genres = data.genre;
+
+    if (data.kidsOnly) {
+      const requestedGenres = parseGenreIds(data.genre).filter((id) => KIDS_MOVIE_GENRES.has(id));
+      const safeGenres = requestedGenres.length > 0 ? requestedGenres : Array.from(KIDS_MOVIE_GENRES);
+      params.with_genres = safeGenres.join(",");
+      params.certification_country = "US";
+      params["certification.lte"] = "PG";
+    } else if (data.genre) {
+      params.with_genres = data.genre;
+    }
+
     const res = await tmdbFetch("/discover/movie", params);
     return { results: res.results, total_pages: res.total_pages };
   });
 
 export const discoverTV = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => z.object({
-    language: z.string().optional(),
-    genre: z.string().optional(),
-    sort: z.string().optional(),
-    page: z.string().optional(),
-  }).parse(d))
+  .inputValidator((d: unknown) => discoverInput.parse(d))
   .handler(async ({ data }) => {
     const params: Record<string, string> = {
       language: data.language || _defaultLang,
       sort_by: data.sort || "popularity.desc",
       page: data.page || "1",
+      include_adult: "false",
     };
-    if (data.genre) params.with_genres = data.genre;
+
+    if (data.kidsOnly) {
+      const requestedGenres = parseGenreIds(data.genre).filter((id) => KIDS_TV_GENRES.has(id));
+      const safeGenres = requestedGenres.length > 0 ? requestedGenres : Array.from(KIDS_TV_GENRES);
+      params.with_genres = safeGenres.join(",");
+    } else if (data.genre) {
+      params.with_genres = data.genre;
+    }
+
     const res = await tmdbFetch("/discover/tv", params);
     return { results: res.results, total_pages: res.total_pages };
   });
 
 // Genre lists
 export const getMovieGenres = createServerFn({ method: "GET" })
-  .handler(async () => {
-    const data = await tmdbFetch("/genre/movie/list");
-    return data.genres;
+  .inputValidator((d: unknown) => z.object({ kidsOnly: z.boolean().optional() }).optional().parse(d))
+  .handler(async ({ data }) => {
+    const response = await tmdbFetch("/genre/movie/list");
+    if (data?.kidsOnly) {
+      return (response.genres || []).filter((genre: { id: number }) => KIDS_MOVIE_GENRES.has(genre.id));
+    }
+    return response.genres;
   });
 
 export const getTVGenres = createServerFn({ method: "GET" })
-  .handler(async () => {
-    const data = await tmdbFetch("/genre/tv/list");
-    return data.genres;
+  .inputValidator((d: unknown) => z.object({ kidsOnly: z.boolean().optional() }).optional().parse(d))
+  .handler(async ({ data }) => {
+    const response = await tmdbFetch("/genre/tv/list");
+    if (data?.kidsOnly) {
+      return (response.genres || []).filter((genre: { id: number }) => KIDS_TV_GENRES.has(genre.id));
+    }
+    return response.genres;
   });

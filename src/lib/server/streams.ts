@@ -280,7 +280,9 @@ async function preflightStreamUrl(
   url: string,
 ): Promise<{ ok: boolean; status?: number; contentType?: string | null }> {
   try {
-    const res = await fetchWithTimeout(
+    // Some CDNs reject range probes but still serve normal GETs.
+    // Try Range first, then fallback to plain GET if needed.
+    const ranged = await fetchWithTimeout(
       url,
       {
         method: "GET",
@@ -291,16 +293,30 @@ async function preflightStreamUrl(
       PREFLIGHT_TIMEOUT_MS,
     );
 
-    const status = res.status;
-    const contentType = res.headers.get("content-type");
-    const okStatus = status === 206 || status === 200;
-    const okType =
-      !contentType ||
+    const rangedStatus = ranged.status;
+    const rangedType = ranged.headers.get("content-type");
+    const rangedOkStatus = rangedStatus === 206 || rangedStatus === 200;
+    const rangedOkType =
+      !rangedType ||
       /video|octet-stream|mp2t|x-matroska|quicktime|mpegurl|application\/vnd\.apple\.mpegurl/i.test(
-        contentType,
+        rangedType,
       );
 
-    return { ok: okStatus && okType, status, contentType };
+    if (rangedOkStatus && rangedOkType) {
+      return { ok: true, status: rangedStatus, contentType: rangedType };
+    }
+
+    const plain = await fetchWithTimeout(url, { method: "GET" }, PREFLIGHT_TIMEOUT_MS);
+    const plainStatus = plain.status;
+    const plainType = plain.headers.get("content-type");
+    const plainOkStatus = plainStatus === 200 || plainStatus === 206;
+    const plainOkType =
+      !plainType ||
+      /video|octet-stream|mp2t|x-matroska|quicktime|mpegurl|application\/vnd\.apple\.mpegurl/i.test(
+        plainType,
+      );
+
+    return { ok: plainOkStatus && plainOkType, status: plainStatus, contentType: plainType };
   } catch {
     return { ok: false };
   }
@@ -406,45 +422,62 @@ async function resolveCandidate(
       }
 
       if (info?.status === "downloaded" && Array.isArray(info?.links) && info.links.length > 0) {
-        let linkIdx = 0;
+        // Links mapping can be inconsistent across providers; try preferred link first,
+        // then fallback through remaining links until one passes unrestrict+preflight.
+        let preferredLinkIdx = 0;
         if (selectedFile && Array.isArray(info.files)) {
           const selected = (info.files as RDTorrentFile[]).filter((f) => (f.selected ?? 0) === 1);
-          const idx = selected.findIndex((f) => f.id === selectedFile!.id);
-          if (idx >= 0 && idx < info.links.length) linkIdx = idx;
+          const idx = selected.findIndex((f) => f.id === selectedFile.id);
+          if (idx >= 0 && idx < info.links.length) preferredLinkIdx = idx;
         }
 
-        const restrictedLink = info.links[linkIdx] as string;
-        let streamUrl = "";
-        try {
-          streamUrl = await unrestrictLink(restrictedLink);
-        } catch (e: unknown) {
-          const message = e instanceof Error ? e.message : "RD unrestrict failed";
+        const linkOrder = [
+          preferredLinkIdx,
+          ...info.links.map((_, idx) => idx).filter((idx) => idx !== preferredLinkIdx),
+        ];
+
+        let lastUnrestrictError: string | null = null;
+        let lastPreflight: { ok: boolean; status?: number; contentType?: string | null } | undefined;
+
+        for (const linkIdx of linkOrder) {
+          const restrictedLink = info.links[linkIdx] as string;
+          let streamUrl = "";
+
+          try {
+            streamUrl = await unrestrictLink(restrictedLink);
+          } catch (e: unknown) {
+            lastUnrestrictError = e instanceof Error ? e.message : "RD unrestrict failed";
+            continue;
+          }
+
+          const preflight = await preflightStreamUrl(streamUrl);
+          lastPreflight = preflight;
+          if (!preflight.ok) {
+            continue;
+          }
+
+          attempt.preflight = preflight;
+          attempt.status = "success";
+          attempt.endedAt = new Date().toISOString();
+
+          return {
+            streamUrl,
+            torrentId,
+            selectedFile: selectedFile ?? undefined,
+          };
+        }
+
+        attempt.preflight = lastPreflight;
+        if (lastUnrestrictError) {
           attempt.errorCode = "RD_UNRESTRICT_FAIL";
-          attempt.error = message;
-          attempt.endedAt = new Date().toISOString();
-          await deleteTorrentBestEffort(torrentId);
-          return null;
-        }
-
-        const preflight = await preflightStreamUrl(streamUrl);
-        attempt.preflight = preflight;
-
-        if (!preflight.ok) {
+          attempt.error = lastUnrestrictError;
+        } else {
           attempt.errorCode = "STREAM_PREFLIGHT_FAIL";
-          attempt.error = `Stream preflight failed${preflight.status ? ` (${preflight.status})` : ""}`;
-          attempt.endedAt = new Date().toISOString();
-          await deleteTorrentBestEffort(torrentId);
-          return null;
+          attempt.error = `Stream preflight failed${lastPreflight?.status ? ` (${lastPreflight.status})` : ""}`;
         }
-
-        attempt.status = "success";
         attempt.endedAt = new Date().toISOString();
-
-        return {
-          streamUrl,
-          torrentId,
-          selectedFile: selectedFile ?? undefined,
-        };
+        await deleteTorrentBestEffort(torrentId);
+        return null;
       }
 
       await sleep(RESOLVER_POLL_DELAY_MS);

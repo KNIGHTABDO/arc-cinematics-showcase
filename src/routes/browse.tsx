@@ -226,10 +226,10 @@ function Footer() {
 
 function ContinueWatchingRow() {
   const [items, setItems] = useState<any[]>([]);
-  const { lang } = useSettings();
+  const { lang, profile } = useSettings();
 
   useEffect(() => {
-    const profileId = localStorage.getItem("arc_active_profile");
+    const profileId = profile?.id || localStorage.getItem("arc_active_profile");
     if (!profileId) return;
 
     const loadHistory = async () => {
@@ -278,7 +278,7 @@ function ContinueWatchingRow() {
     };
 
     loadHistory();
-  }, []);
+  }, [profile?.id]);
 
   if (items.length === 0) return null;
 

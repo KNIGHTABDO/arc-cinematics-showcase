@@ -29,6 +29,15 @@ Then you can query recent health quickly:
 select * from public.stream_health_recent limit 50;
 ```
 
+## 2026-04-19 hardening updates
+
+- TV streaming resolver is now more fault-tolerant when Real-Debrid provides multiple links for a selected torrent file:
+  - tries preferred selected-file link first, then falls back through remaining links
+  - validates each unrestrict result with preflight before returning
+  - supports plain-GET preflight fallback when byte-range probes are blocked by provider/CDN
+- Kids profile protections are enforced on browse/discover/search/detail/watch flows to prevent direct-link bypass.
+- Continue Watching now rebinds to the active profile ID, reducing cross-profile stale rows.
+
 ## Local
 
 ```bash

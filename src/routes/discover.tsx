@@ -28,22 +28,26 @@ function DiscoverPage() {
   const [sort, setSort] = useState("popularity.desc");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const isKids = profile?.is_kids === true;
 
   // Fetch genres
   useEffect(() => {
-    (mediaType === "movie" ? getMovieGenres() : getTVGenres()).then(setGenres);
-  }, [mediaType]);
+    (mediaType === "movie"
+      ? getMovieGenres({ data: { kidsOnly: isKids } })
+      : getTVGenres({ data: { kidsOnly: isKids } })
+    ).then(setGenres);
+  }, [mediaType, isKids]);
 
   // Fetch results
   useEffect(() => {
     setLoading(true);
-    const params = { language: tmdbLang, genre: activeGenre, sort, page: "1" };
+    const params = { language: tmdbLang, genre: activeGenre, sort, page: "1", kidsOnly: isKids };
     const fn = mediaType === "movie" ? discoverMovies : discoverTV;
     fn({ data: params }).then((data: any) => {
       setResults(data.results || []);
       setLoading(false);
     });
-  }, [mediaType, activeGenre, sort, tmdbLang]);
+  }, [mediaType, activeGenre, sort, tmdbLang, isKids]);
 
   return (
     <>
@@ -54,29 +58,37 @@ function DiscoverPage() {
           <div className="flex flex-col gap-4 mb-8 md:flex-row md:items-center md:justify-between">
             <h1 className="font-display text-3xl font-extrabold">{t("nav.discover", lang)}</h1>
             <div className="flex items-center gap-3">
-              {/* Movie / TV toggle */}
-              <div className="flex bg-arc-surface-2 rounded-full p-1 border border-white/10">
-                <button
-                  onClick={() => { setMediaType("movie"); setActiveGenre(""); }}
-                  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${mediaType === "movie" ? "bg-arc-accent text-arc-void" : "text-arc-muted hover:text-white"}`}
-                >
-                  {t("nav.movies", lang)}
-                </button>
-                <button
-                  onClick={() => { setMediaType("tv"); setActiveGenre(""); }}
-                  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${mediaType === "tv" ? "bg-arc-accent text-arc-void" : "text-arc-muted hover:text-white"}`}
-                >
-                  {t("nav.series", lang)}
-                </button>
-              </div>
-              {/* Sort */}
+              {!isKids && (
+                <div className="flex bg-arc-surface-2 rounded-full p-1 border border-white/10">
+                  <button
+                    onClick={() => {
+                      setMediaType("movie");
+                      setActiveGenre("");
+                    }}
+                    className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${mediaType === "movie" ? "bg-arc-accent text-arc-void" : "text-arc-muted hover:text-white"}`}
+                  >
+                    {t("nav.movies", lang)}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMediaType("tv");
+                      setActiveGenre("");
+                    }}
+                    className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${mediaType === "tv" ? "bg-arc-accent text-arc-void" : "text-arc-muted hover:text-white"}`}
+                  >
+                    {t("nav.series", lang)}
+                  </button>
+                </div>
+              )}
               <select
                 value={sort}
                 onChange={(e) => setSort(e.target.value)}
                 className="bg-arc-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-arc-text outline-none"
               >
-                {SORT_OPTIONS.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
                 ))}
               </select>
             </div>

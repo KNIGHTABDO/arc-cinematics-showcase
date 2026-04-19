@@ -7,6 +7,7 @@ import {
   getPopularTV,
   getTopRatedTV,
   getAiringTodayTV,
+  getKidsTV,
   discoverTV,
 } from "@/lib/server/tmdb";
 import { useSettings } from "@/lib/store/settings";
@@ -20,6 +21,7 @@ export const Route = createFileRoute("/series")({
 function SeriesPage() {
   const { lang, profile } = useSettings();
   const tmdbLang = profile?.tmdb_language || "en-US";
+  const isKids = profile?.is_kids === true;
   const langParam = { language: tmdbLang };
 
   const [trendingTV, setTrendingTV] = useState<any[]>([]);
@@ -33,15 +35,35 @@ function SeriesPage() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    if (isKids) {
+      Promise.all([
+        getKidsTV({ data: langParam }),
+        discoverTV({ data: { language: tmdbLang, kidsOnly: true, genre: "16" } }), // Animation
+        discoverTV({ data: { language: tmdbLang, kidsOnly: true, genre: "10762" } }), // Kids
+      ]).then(([kids, animation, kidsGenre]) => {
+        const kidsList = kids || [];
+        setTrendingTV(kidsList);
+        setPopularTV(kidsList);
+        setTopRatedTV((animation as any)?.results || kidsList);
+        setAiringToday((kidsGenre as any)?.results || kidsList);
+        setDrama([]);
+        setCrime([]);
+        setAnime((animation as any)?.results || kidsList);
+        setDocumentary([]);
+        setLoaded(true);
+      });
+      return;
+    }
+
     Promise.all([
       getTrendingTV({ data: langParam }),
       getPopularTV({ data: langParam }),
       getTopRatedTV({ data: langParam }),
       getAiringTodayTV({ data: langParam }),
-      discoverTV({ data: { language: tmdbLang, genre: "18" } }),         // Drama
-      discoverTV({ data: { language: tmdbLang, genre: "80" } }),         // Crime
-      discoverTV({ data: { language: tmdbLang, genre: "16" } }),         // Animation/Anime
-      discoverTV({ data: { language: tmdbLang, genre: "99" } }),         // Documentary
+      discoverTV({ data: { language: tmdbLang, genre: "18" } }), // Drama
+      discoverTV({ data: { language: tmdbLang, genre: "80" } }), // Crime
+      discoverTV({ data: { language: tmdbLang, genre: "16" } }), // Animation/Anime
+      discoverTV({ data: { language: tmdbLang, genre: "99" } }), // Documentary
     ]).then(([t, p, tr, at, dr, cr, an, doc]) => {
       setTrendingTV(t || []);
       setPopularTV(p || []);
@@ -53,7 +75,7 @@ function SeriesPage() {
       setDocumentary((doc as any)?.results || []);
       setLoaded(true);
     });
-  }, [tmdbLang]);
+  }, [tmdbLang, isKids]);
 
   return (
     <>
@@ -73,10 +95,10 @@ function SeriesPage() {
             <ContentRow label="Airing Today" items={airingToday} linkPrefix="/tv" />
             <ContentRow label={t("browse.popularTV", lang)} items={popularTV} linkPrefix="/tv" />
             <ContentRow label={t("browse.acclaimed", lang)} items={topRatedTV} linkPrefix="/tv" />
-            <ContentRow label="Drama" items={drama} linkPrefix="/tv" />
-            <ContentRow label="Crime" items={crime} linkPrefix="/tv" />
+            {!isKids && <ContentRow label="Drama" items={drama} linkPrefix="/tv" />}
+            {!isKids && <ContentRow label="Crime" items={crime} linkPrefix="/tv" />}
             <ContentRow label="Animation" items={anime} linkPrefix="/tv" />
-            <ContentRow label="Documentary" items={documentary} linkPrefix="/tv" />
+            {!isKids && <ContentRow label="Documentary" items={documentary} linkPrefix="/tv" />}
           </div>
         )}
       </main>

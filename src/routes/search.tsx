@@ -1,23 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { gsap, prefersReducedMotion } from "@/lib/gsap";
 import { Navbar } from "@/components/layout/Navbar";
 import { MovieCard } from "@/components/cards/MovieCard";
 import { Pill } from "@/components/ui/Pill";
-import { getPopularMovies, searchMovies } from "@/lib/server/tmdb";
+import { getPopularMovies, getKidsMovies, searchMovies } from "@/lib/server/tmdb";
+import { useSettings } from "@/lib/store/settings";
 import type { TMDBMovie } from "@/components/cards/MovieCard";
 
 export const Route = createFileRoute("/search")({
   head: () => ({
-    meta: [
-      { title: "Search — ARC" },
-    ],
+    meta: [{ title: "Search — ARC" }],
   }),
-  loader: async () => {
-    // Top searches fallback
-    const top = await getPopularMovies();
-    return { top: top.slice(0, 10) };
-  },
   component: SearchPage,
 });
 
@@ -29,23 +23,31 @@ const PLACEHOLDERS = [
 ];
 
 function SearchPage() {
-  const { top } = Route.useLoaderData();
+  const { profile } = useSettings();
+  const tmdbLang = profile?.tmdb_language || "en-US";
+  const isKids = profile?.is_kids === true;
+
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [placeholder, setPlaceholder] = useState(PLACEHOLDERS[0]);
+  const [top, setTop] = useState<TMDBMovie[]>([]);
   const [results, setResults] = useState<TMDBMovie[] | null>(null);
-  
+
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
     if (prefersReducedMotion()) return;
-    
+
     const ctx = gsap.context(() => {
-        if (wrapRef.current) {
-          gsap.fromTo(wrapRef.current, { scale: 0.95, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.6, ease: "power3.out" });
-        }
+      if (wrapRef.current) {
+        gsap.fromTo(
+          wrapRef.current,
+          { scale: 0.95, opacity: 0 },
+          { scale: 1, opacity: 1, duration: 0.6, ease: "power3.out" },
+        );
+      }
     });
     return () => ctx.revert();
   }, []);
@@ -64,20 +66,57 @@ function SearchPage() {
     return () => clearTimeout(id);
   }, [q]);
 
-  // Execute TMDB Search
+  useEffect(() => {
+    let active = true;
+    const fetchTop = async () => {
+      const data = isKids
+        ? await getKidsMovies({ data: { language: tmdbLang } })
+        : await getPopularMovies({ data: { language: tmdbLang } });
+      if (active) {
+        setTop(Array.isArray(data) ? (data as TMDBMovie[]) : []);
+      }
+    };
+    fetchTop().catch(() => {
+      if (active) setTop([]);
+    });
+    return () => {
+      active = false;
+    };
+  }, [isKids, tmdbLang]);
+
   useEffect(() => {
     if (!debounced.trim()) {
       setResults(null);
       return;
     }
-    
+
     let active = true;
-    searchMovies({ data: debounced }).then((res: any) => {
-        if (active) setResults(res);
-    });
-    
-    return () => { active = false; };
-  }, [debounced]);
+    searchMovies({ data: debounced })
+      .then((res: any) => {
+        if (!active) return;
+        const list = Array.isArray(res) ? (res as TMDBMovie[]) : [];
+        const filtered = list.filter((item) => {
+          if (!item) return false;
+          if (!isKids) return true;
+          const genres = (item as any).genre_ids;
+          if (!Array.isArray(genres)) return false;
+          return genres.includes(16) || genres.includes(10751) || genres.includes(10762);
+        });
+        setResults(filtered);
+      })
+      .catch(() => {
+        if (active) setResults([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [debounced, isKids]);
+
+  const emptySuggestions = useMemo(
+    () => (isKids ? ["Minions", "Frozen", "Toy Story", "Moana", "Encanto"] : ["Inception", "Dune", "Interstellar", "Batman", "Romance"]),
+    [isKids],
+  );
 
   return (
     <>
@@ -101,7 +140,12 @@ function SearchPage() {
               <h2 className="label-caps mb-5 text-arc-text/60">Top Searches</h2>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                 {top.map((t: TMDBMovie) => (
-                  <MovieCard key={t.id} movie={t} width={240} />
+                  <MovieCard
+                    key={t.id}
+                    movie={t}
+                    width={240}
+                    linkPrefix={t.media_type === "tv" || t.first_air_date ? "/tv" : "/title"}
+                  />
                 ))}
               </div>
             </>
@@ -112,8 +156,10 @@ function SearchPage() {
               </div>
               <p className="mt-3 text-sm text-arc-muted">Try one of these instead</p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {["Inception", "Dune", "Interstellar", "Batman", "Romance"].map((s) => (
-                  <Pill key={s} onClick={() => setQ(s)}>{s}</Pill>
+                {emptySuggestions.map((s) => (
+                  <Pill key={s} onClick={() => setQ(s)}>
+                    {s}
+                  </Pill>
                 ))}
               </div>
             </div>
@@ -124,7 +170,12 @@ function SearchPage() {
               </h2>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                 {results.map((t: TMDBMovie) => (
-                  <MovieCard key={t.id} movie={t} width={220} />
+                  <MovieCard
+                    key={t.id}
+                    movie={t}
+                    width={220}
+                    linkPrefix={t.media_type === "tv" || t.first_air_date ? "/tv" : "/title"}
+                  />
                 ))}
               </div>
             </>

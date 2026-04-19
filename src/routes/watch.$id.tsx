@@ -5,6 +5,7 @@ import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
 import { supabase } from "@/lib/supabase";
 import { useSettings } from "@/lib/store/settings";
 import { t } from "@/lib/i18n";
+import { isMovieAllowedForKids, isTVAllowedForKids } from "@/lib/kids-content";
 
 interface SubtitleTrack {
   label: string;
@@ -57,40 +58,70 @@ function WatchPage() {
   const [activeSub, setActiveSub] = useState<string | null>(null);
   const [showSubMenu, setShowSubMenu] = useState(false);
   const { lang, profile } = useSettings();
+  const isKids = profile?.is_kids === true;
 
   // Fetch details (movie or TV) + stream
   useEffect(() => {
-    if (parsed.type === "tv") {
-      getTVDetails({ data: parsed.tmdbId }).then((show: any) => {
-        const label = `${show?.name || "Show"} — S${parsed.season}E${parsed.episode}`;
-        setTitle(label);
-        if (show?.backdrop_path)
-          setBackdrop(`https://image.tmdb.org/t/p/w780${show.backdrop_path}`);
-      });
-    } else {
-      getMovieDetails({ data: parsed.tmdbId }).then((movie: any) => {
-        if (movie?.title) setTitle(movie.title);
-        if (movie?.backdrop_path)
-          setBackdrop(`https://image.tmdb.org/t/p/w780${movie.backdrop_path}`);
-      });
-    }
+    let cancelled = false;
 
-    getStreamForMovie({ data: id })
-      .then((res: any) => {
+    const load = async () => {
+      try {
+        if (parsed.type === "tv") {
+          const show: any = await getTVDetails({ data: parsed.tmdbId });
+          if (cancelled) return;
+
+          const label = `${show?.name || "Show"} — S${parsed.season}E${parsed.episode}`;
+          setTitle(label);
+          if (show?.backdrop_path) {
+            setBackdrop(`https://image.tmdb.org/t/p/w780${show.backdrop_path}`);
+          }
+
+          if (isKids && !isTVAllowedForKids(show)) {
+            setError("This content is not available on kids profiles.");
+            return;
+          }
+        } else {
+          const movie: any = await getMovieDetails({ data: parsed.tmdbId });
+          if (cancelled) return;
+
+          if (movie?.title) setTitle(movie.title);
+          if (movie?.backdrop_path) {
+            setBackdrop(`https://image.tmdb.org/t/p/w780${movie.backdrop_path}`);
+          }
+
+          if (isKids && !isMovieAllowedForKids(movie)) {
+            setError("This content is not available on kids profiles.");
+            return;
+          }
+        }
+
+        const res: any = await getStreamForMovie({ data: id });
+        if (cancelled) return;
+
         if (res.error || res.errorCode) {
           const code = res.errorCode ? `[${res.errorCode}] ` : "";
           throw new Error(`${code}${res.error || "Failed to locate stream."}`);
         }
+
         if (res.streamUrl) {
           setStreamUrl(res.streamUrl);
           return;
         }
+
         throw new Error("Resolver returned no stream URL.");
-      })
-      .catch((err: any) => {
-        setError(err.message || "Failed to locate stream.");
-      });
-  }, [id]);
+      } catch (err: any) {
+        if (!cancelled) {
+          setError(err?.message || "Failed to locate stream.");
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, isKids]);
 
   // Fetch subtitles from subdl.com (free, no key)
   useEffect(() => {

@@ -7,8 +7,8 @@ import {
   getPopularMovies,
   getTopRatedMovies,
   getNowPlayingMovies,
+  getKidsMovies,
   discoverMovies,
-  getMovieGenres,
 } from "@/lib/server/tmdb";
 import { useSettings } from "@/lib/store/settings";
 import { t } from "@/lib/i18n";
@@ -21,6 +21,7 @@ export const Route = createFileRoute("/movies")({
 function MoviesPage() {
   const { lang, profile } = useSettings();
   const tmdbLang = profile?.tmdb_language || "en-US";
+  const isKids = profile?.is_kids === true;
   const langParam = { language: tmdbLang };
 
   const [trending, setTrending] = useState<any[]>([]);
@@ -34,15 +35,35 @@ function MoviesPage() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    if (isKids) {
+      Promise.all([
+        getKidsMovies({ data: langParam }),
+        discoverMovies({ data: { language: tmdbLang, kidsOnly: true, genre: "16" } }), // Animation
+        discoverMovies({ data: { language: tmdbLang, kidsOnly: true, genre: "10751" } }), // Family
+      ]).then(([kids, animation, family]) => {
+        const kidsList = kids || [];
+        setTrending(kidsList);
+        setPopular(kidsList);
+        setTopRated((animation as any)?.results || kidsList);
+        setNowPlaying((family as any)?.results || kidsList);
+        setAction([]);
+        setComedy([]);
+        setHorror([]);
+        setScifi([]);
+        setLoaded(true);
+      });
+      return;
+    }
+
     Promise.all([
       getTrendingMovies({ data: langParam }),
       getPopularMovies({ data: langParam }),
       getTopRatedMovies({ data: langParam }),
       getNowPlayingMovies({ data: langParam }),
-      discoverMovies({ data: { language: tmdbLang, genre: "28" } }),    // Action
-      discoverMovies({ data: { language: tmdbLang, genre: "35" } }),    // Comedy
-      discoverMovies({ data: { language: tmdbLang, genre: "27" } }),    // Horror
-      discoverMovies({ data: { language: tmdbLang, genre: "878" } }),   // Sci-Fi
+      discoverMovies({ data: { language: tmdbLang, genre: "28" } }), // Action
+      discoverMovies({ data: { language: tmdbLang, genre: "35" } }), // Comedy
+      discoverMovies({ data: { language: tmdbLang, genre: "27" } }), // Horror
+      discoverMovies({ data: { language: tmdbLang, genre: "878" } }), // Sci-Fi
     ]).then(([t, p, tr, np, act, com, hor, sf]) => {
       setTrending(t || []);
       setPopular(p || []);
@@ -54,7 +75,7 @@ function MoviesPage() {
       setScifi((sf as any)?.results || []);
       setLoaded(true);
     });
-  }, [tmdbLang]);
+  }, [tmdbLang, isKids]);
 
   return (
     <>
@@ -73,10 +94,10 @@ function MoviesPage() {
             <ContentRow label={t("browse.trending", lang)} items={trending} variant="trending" />
             <ContentRow label={t("browse.nowPlaying", lang)} items={nowPlaying} />
             <ContentRow label={t("browse.acclaimed", lang)} items={topRated} />
-            <ContentRow label="Action" items={action} />
-            <ContentRow label="Comedy" items={comedy} />
-            <ContentRow label="Horror" items={horror} />
-            <ContentRow label="Sci-Fi" items={scifi} />
+            {!isKids && <ContentRow label="Action" items={action} />}
+            {!isKids && <ContentRow label="Comedy" items={comedy} />}
+            {!isKids && <ContentRow label="Horror" items={horror} />}
+            {!isKids && <ContentRow label="Sci-Fi" items={scifi} />}
             <ContentRow label={t("browse.topPicks", lang)} items={popular} />
           </div>
         )}
