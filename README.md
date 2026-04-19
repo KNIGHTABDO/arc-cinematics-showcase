@@ -39,6 +39,7 @@ select * from public.stream_health_recent limit 50;
   - returns additional unrestricted RD fallback URLs (`backupStreams`) so the player can auto-switch if the first host stalls
 - Watch player now auto-fails over to `backupStreams` on media element error (instead of staying stuck at `0:00`).
 - Watch player now supports manual quality preference (`Auto`, `2160p`, `1080p`, `720p`, `480p`) and re-resolves stream candidates using that preference.
+- Resolver now strongly favors browser-compatible AVC/x264 candidates over HEVC/x265 when quality is similar, to reduce iPhone/Safari `0:00` stalls.
 - Kids profile protections are enforced on browse/discover/search/detail/watch flows to prevent direct-link bypass.
 - Continue Watching now rebinds to the active profile ID, reducing cross-profile stale rows.
 

@@ -11,6 +11,7 @@
 - If unrestrict succeeds but both server-side probes are blocked, resolver now returns the first unrestricted URL fallback instead of hard-failing, matching real player behavior better.
 - Return `backupStreams` as additional unrestricted RD URLs per selected torrent so the player can fail over at runtime.
 - Add quality-aware ranking preference (`auto/2160/1080/720/480`) to stream candidate scoring and pass selected quality from `/watch/$id`.
+- Increase browser-compatibility weighting to prefer AVC/x264 streams over HEVC/x265 for equivalent quality, improving iPhone Safari playback reliability.
 - Watch player now supports a manual quality menu and retries resolver with the selected preference.
 - Watch player now switches to next backup stream URL on `<video>` error to avoid indefinite `0:00` stalls.
 - Add/expand resolver utility tests for TV file-index mapping fallbacks (`array index`, `file id`, and `file id + 1`).

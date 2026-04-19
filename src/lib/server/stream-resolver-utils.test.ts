@@ -43,6 +43,18 @@ describe("stream resolver utilities", () => {
     assert.equal(ranked[0].infoHash, "b");
   });
 
+  it("rankCandidates prefers x264 over x265 for same quality in browser playback", () => {
+    const ranked = rankCandidates(
+      [
+        { infoHash: "a", magnet: "magnet:?xt=urn:btih:a", title: "Show.S01E01.1080p.WEB-DL.x265" },
+        { infoHash: "b", magnet: "magnet:?xt=urn:btih:b", title: "Show.S01E01.1080p.WEB-DL.x264" },
+      ],
+      { type: "tv", season: 1, episode: 1, preferredQuality: "1080" },
+    );
+
+    assert.equal(ranked[0].infoHash, "b");
+  });
+
   it("chooseTargetFile prefers explicit episode match for TV", () => {
     const files: RDTorrentFile[] = [
       { id: 1, path: "/Show.S01E02.mkv", bytes: 1_000_000_000 },

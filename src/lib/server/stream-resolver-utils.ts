@@ -58,9 +58,10 @@ export function scoreCandidate(
   if (text.includes("web dl") || text.includes("web-dl") || text.includes("webrip")) score += 8;
   if (text.includes("bluray") || text.includes("bdrip") || text.includes("remux")) score += 10;
 
-  // Browser compatibility preference
-  if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 12;
-  if (text.includes("hdr") || text.includes("dv") || text.includes("dolby vision")) score -= 6;
+  // Browser compatibility preference (web player first, Stremio-like reliability in browser context)
+  if (text.includes("x264") || text.includes("h264") || text.includes("avc")) score += 26;
+  if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 85;
+  if (text.includes("hdr") || text.includes("dv") || text.includes("dolby vision")) score -= 22;
 
   // Penalize bad sources
   if (
