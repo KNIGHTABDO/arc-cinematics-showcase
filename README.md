@@ -36,6 +36,9 @@ select * from public.stream_health_recent limit 50;
   - validates each unrestrict result with preflight before returning
   - supports plain-GET preflight fallback when byte-range probes are blocked by provider/CDN
   - if unrestrict succeeds but server probes are blocked, returns the first unrestricted URL as a playable fallback instead of failing
+  - returns additional unrestricted RD fallback URLs (`backupStreams`) so the player can auto-switch if the first host stalls
+- Watch player now auto-fails over to `backupStreams` on media element error (instead of staying stuck at `0:00`).
+- Watch player now supports manual quality preference (`Auto`, `2160p`, `1080p`, `720p`, `480p`) and re-resolves stream candidates using that preference.
 - Kids profile protections are enforced on browse/discover/search/detail/watch flows to prevent direct-link bypass.
 - Continue Watching now rebinds to the active profile ID, reducing cross-profile stale rows.
 

@@ -41,7 +41,12 @@ export function isLikelyVideoFile(path: string): boolean {
 
 export function scoreCandidate(
   candidate: StreamCandidate,
-  opts: { type: "movie" | "tv"; season?: number; episode?: number },
+  opts: {
+    type: "movie" | "tv";
+    season?: number;
+    episode?: number;
+    preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
+  },
 ): number {
   const text = sanitizeTitle(candidate.title);
   let score = 0;
@@ -66,6 +71,23 @@ export function scoreCandidate(
   )
     score -= 120;
 
+  if (opts.preferredQuality && opts.preferredQuality !== "auto") {
+    const q = opts.preferredQuality;
+    const has2160 = /\b2160p?\b|\b4k\b/i.test(candidate.title);
+    const has1080 = /\b1080p?\b/i.test(candidate.title);
+    const has720 = /\b720p?\b/i.test(candidate.title);
+    const has480 = /\b480p?\b/i.test(candidate.title);
+
+    const matchesPreferred =
+      (q === "2160" && has2160) ||
+      (q === "1080" && has1080) ||
+      (q === "720" && has720) ||
+      (q === "480" && has480);
+
+    if (matchesPreferred) score += 120;
+    else score -= 45;
+  }
+
   if (opts.type === "tv") {
     const matchers = buildEpisodeMatchers(opts.season, opts.episode);
     if (matchers.length && matchers.some((rx) => rx.test(candidate.title))) score += 90;
@@ -81,7 +103,12 @@ export function scoreCandidate(
 
 export function rankCandidates(
   candidates: StreamCandidate[],
-  opts: { type: "movie" | "tv"; season?: number; episode?: number },
+  opts: {
+    type: "movie" | "tv";
+    season?: number;
+    episode?: number;
+    preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
+  },
 ): Array<StreamCandidate & { score: number }> {
   const dedup = new Map<string, StreamCandidate>();
   for (const c of candidates) {

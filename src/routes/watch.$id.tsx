@@ -41,6 +41,9 @@ function WatchPage() {
   const parsed = parseWatchId(id);
 
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [backupStreams, setBackupStreams] = useState<string[]>([]);
+  const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
+  const [quality, setQuality] = useState<"auto" | "2160" | "1080" | "720" | "480">("auto");
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState<string>("Loading...");
   const [backdrop, setBackdrop] = useState<string>("");
@@ -57,6 +60,8 @@ function WatchPage() {
   const [subtitles, setSubtitles] = useState<SubtitleTrack[]>([]);
   const [activeSub, setActiveSub] = useState<string | null>(null);
   const [showSubMenu, setShowSubMenu] = useState(false);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
   const { lang, profile } = useSettings();
   const isKids = profile?.is_kids === true;
 
@@ -95,7 +100,7 @@ function WatchPage() {
           }
         }
 
-        const res: any = await getStreamForMovie({ data: id });
+        const res: any = await getStreamForMovie({ data: { watchId: id, preferredQuality: quality } });
         if (cancelled) return;
 
         if (res.error || res.errorCode) {
@@ -105,6 +110,10 @@ function WatchPage() {
 
         if (res.streamUrl) {
           setStreamUrl(res.streamUrl);
+          setBackupStreams(Array.isArray(res.backupStreams) ? res.backupStreams : []);
+          setCurrentStreamIndex(0);
+          setStreamReady(false);
+          setError(null);
           return;
         }
 
@@ -121,7 +130,7 @@ function WatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, isKids]);
+  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, isKids, quality]);
 
   // Fetch subtitles from subdl.com (free, no key)
   useEffect(() => {
@@ -257,6 +266,10 @@ function WatchPage() {
           e.preventDefault();
           v.paused ? v.play() : v.pause();
           break;
+        case "q":
+          e.preventDefault();
+          setShowQualityMenu((x) => !x);
+          break;
         case "f":
           e.preventDefault();
           toggleFullscreen();
@@ -273,11 +286,6 @@ function WatchPage() {
         case "ArrowRight":
           e.preventDefault();
           v.currentTime += 10;
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          v.volume = Math.min(1, v.volume + 0.1);
-          setVolume(v.volume);
           break;
         case "ArrowUp":
           e.preventDefault();
@@ -301,7 +309,7 @@ function WatchPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [id, navigate, resetControlsTimer]);
+  }, [id, navigate, resetControlsTimer, parsed.type, parsed.tmdbId]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -384,13 +392,19 @@ function WatchPage() {
         ref={videoRef}
         src={streamUrl}
         autoPlay
+        playsInline
+        preload="metadata"
         className="h-full w-full object-contain"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
         onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+        onCanPlay={() => setStreamReady(true)}
         onWaiting={() => setBuffering(true)}
-        onPlaying={() => setBuffering(false)}
+        onPlaying={() => {
+          setBuffering(false);
+          setStreamReady(true);
+        }}
         onVolumeChange={() => {
           setVolume(videoRef.current?.volume || 1);
           setMuted(videoRef.current?.muted || false);
@@ -399,10 +413,21 @@ function WatchPage() {
           const v = videoRef.current;
           if (v) v.paused ? v.play() : v.pause();
         }}
+        onError={() => {
+          const next = backupStreams[currentStreamIndex];
+          if (next) {
+            setCurrentStreamIndex((idx) => idx + 1);
+            setStreamReady(false);
+            setBuffering(true);
+            setStreamUrl(next);
+            return;
+          }
+          setError("Playback failed for this stream URL.");
+        }}
       />
 
       {/* Buffering Overlay */}
-      {buffering && (
+      {(buffering || !streamReady) && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="h-14 w-14 animate-spin rounded-full border-2 border-transparent border-t-arc-accent"></div>
         </div>
@@ -612,6 +637,40 @@ function WatchPage() {
             <span className="text-white/60 text-sm tabular font-mono">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
+
+            {/* Quality selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowQualityMenu(!showQualityMenu)}
+                className="text-white/70 hover:text-white transition text-xs border border-white/20 rounded-md px-2 py-1"
+                title="Stream quality"
+              >
+                {quality === "auto" ? "Auto" : `${quality}p`}
+              </button>
+              {showQualityMenu && (
+                <div className="absolute bottom-full left-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[120px] backdrop-blur-xl">
+                  {(["auto", "2160", "1080", "720", "480"] as const).map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => {
+                        setShowQualityMenu(false);
+                        if (q !== quality) {
+                          setQuality(q);
+                          setStreamUrl(null);
+                          setBackupStreams([]);
+                          setCurrentStreamIndex(0);
+                          setStreamReady(false);
+                          setBuffering(true);
+                        }
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${quality === q ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
+                    >
+                      {q === "auto" ? "Auto" : `${q}p`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-4">

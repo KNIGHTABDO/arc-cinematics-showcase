@@ -31,6 +31,18 @@ describe("stream resolver utilities", () => {
     assert.equal(ranked[0].infoHash, "b");
   });
 
+  it("rankCandidates prefers selected quality when requested", () => {
+    const ranked = rankCandidates(
+      [
+        { infoHash: "a", magnet: "magnet:?xt=urn:btih:a", title: "Movie.2160p.WEB-DL" },
+        { infoHash: "b", magnet: "magnet:?xt=urn:btih:b", title: "Movie.1080p.WEB-DL" },
+      ],
+      { type: "movie", preferredQuality: "1080" },
+    );
+
+    assert.equal(ranked[0].infoHash, "b");
+  });
+
   it("chooseTargetFile prefers explicit episode match for TV", () => {
     const files: RDTorrentFile[] = [
       { id: 1, path: "/Show.S01E02.mkv", bytes: 1_000_000_000 },

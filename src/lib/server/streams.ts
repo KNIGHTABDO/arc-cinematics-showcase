@@ -337,7 +337,12 @@ async function resolveCandidate(
   candidate: StreamCandidate & { score: number },
   media: { type: MediaType; season?: number; episode?: number },
   diagnostics: ResolverDiagnostics,
-): Promise<{ streamUrl: string; torrentId: string; selectedFile?: RDTorrentFile } | null> {
+): Promise<{
+  streamUrl: string;
+  backupStreams: string[];
+  torrentId: string;
+  selectedFile?: RDTorrentFile;
+} | null> {
   const attempt: ResolverAttempt = {
     infoHash: candidate.infoHash,
     title: candidate.title,
@@ -439,6 +444,7 @@ async function resolveCandidate(
         let lastUnrestrictError: string | null = null;
         let lastPreflight: { ok: boolean; status?: number; contentType?: string | null } | undefined;
         let firstUnrestrictedUrl: string | null = null;
+        const unrestrictedCandidates: string[] = [];
 
         for (const linkIdx of linkOrder) {
           const restrictedLink = info.links[linkIdx] as string;
@@ -447,6 +453,7 @@ async function resolveCandidate(
           try {
             streamUrl = await unrestrictLink(restrictedLink);
             if (!firstUnrestrictedUrl) firstUnrestrictedUrl = streamUrl;
+            if (!unrestrictedCandidates.includes(streamUrl)) unrestrictedCandidates.push(streamUrl);
           } catch (e: unknown) {
             lastUnrestrictError = e instanceof Error ? e.message : "RD unrestrict failed";
             continue;
@@ -464,6 +471,7 @@ async function resolveCandidate(
 
           return {
             streamUrl,
+            backupStreams: unrestrictedCandidates.filter((u) => u !== streamUrl),
             torrentId,
             selectedFile: selectedFile ?? undefined,
           };
@@ -478,6 +486,7 @@ async function resolveCandidate(
 
           return {
             streamUrl: firstUnrestrictedUrl,
+            backupStreams: unrestrictedCandidates.filter((u) => u !== firstUnrestrictedUrl),
             torrentId,
             selectedFile: selectedFile ?? undefined,
           };
@@ -526,11 +535,16 @@ async function telemetryLog(diag: ResolverDiagnostics) {
   }
 }
 
-const inputSchema = z.string().min(1);
+const inputSchema = z.object({
+  watchId: z.string().min(1),
+  preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
+});
 
 export const getStreamForMovie = createServerFn({ method: "POST" })
-  .inputValidator((d: string) => inputSchema.parse(d))
-  .handler(async ({ data: watchId }) => {
+  .inputValidator((d: unknown) => inputSchema.parse(d))
+  .handler(async ({ data }) => {
+    const watchId = data.watchId;
+    const preferredQuality = data.preferredQuality ?? "auto";
     if (!RD_TOKEN) {
       return {
         errorCode: "NO_RDTOKEN" as ResolveErrorCode,
@@ -571,6 +585,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         type: parsed.type,
         season: parsed.season,
         episode: parsed.episode,
+        preferredQuality,
       }).slice(0, RESOLVER_MAX_CANDIDATES);
 
       diagnostics.candidateCount = ranked.length;
@@ -595,8 +610,6 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         };
       }
 
-      const backupStreams: string[] = [];
-
       for (const candidate of ranked) {
         const resolved = await resolveCandidate(candidate, parsed, diagnostics);
         if (!resolved) continue;
@@ -617,11 +630,12 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
 
         return {
           streamUrl: resolved.streamUrl,
-          backupStreams,
+          backupStreams: resolved.backupStreams,
           imdbId,
           mediaType: parsed.type,
           season: parsed.season,
           episode: parsed.episode,
+          selectedQuality: preferredQuality,
           diagnostics,
         };
       }
