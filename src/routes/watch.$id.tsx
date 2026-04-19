@@ -449,11 +449,34 @@ function WatchPage() {
   }, [id, navigate, resetControlsTimer, parsed.type, parsed.tmdbId]);
 
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
+    const videoEl = videoRef.current;
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    // iOS Safari: fullscreen API only works on the <video> element itself
+    if (isIOS && videoEl) {
+      if ((videoEl as any).webkitEnterFullscreen) {
+        (videoEl as any).webkitEnterFullscreen();
+      } else if ((videoEl as any).webkitRequestFullscreen) {
+        (videoEl as any).webkitRequestFullscreen();
+      }
+      return;
+    }
+
+    // Standard Fullscreen API for desktop/Android
+    if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
+      const el = document.documentElement;
+      if (el.requestFullscreen) {
+        el.requestFullscreen();
+      } else if ((el as any).webkitRequestFullscreen) {
+        (el as any).webkitRequestFullscreen();
+      }
       setFullscreen(true);
     } else {
-      document.exitFullscreen();
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
       setFullscreen(false);
     }
   };
@@ -564,10 +587,6 @@ function WatchPage() {
           setVolume(videoRef.current?.volume || 1);
           setMuted(videoRef.current?.muted || false);
         }}
-        onClick={() => {
-          const v = videoRef.current;
-          if (v) v.paused ? v.play() : v.pause();
-        }}
         onError={() => {
           const v = videoRef.current;
           const mediaError = v?.error;
@@ -609,15 +628,27 @@ function WatchPage() {
         )}
       </video>
 
-      {/* Touch overlay — tap to play/pause, double-tap to seek ±10s */}
+      {/* Touch overlay — tap toggles controls visibility, double-tap to seek ±10s */}
       <div
         className="absolute inset-0 z-10"
         onClick={(e) => {
-          // Don't interfere with controls
+          // Don't interfere with control buttons
           if ((e.target as HTMLElement).closest("[data-controls]")) return;
-          const v = videoRef.current;
-          if (v) v.paused ? v.play() : v.pause();
-          resetControlsTimer();
+          // On mobile: first tap shows/hides controls, NOT play/pause
+          // Play/pause is handled by the dedicated button
+          if ('ontouchstart' in window) {
+            if (showControls) {
+              setShowControls(false);
+              if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+            } else {
+              resetControlsTimer();
+            }
+          } else {
+            // Desktop: click to play/pause
+            const v = videoRef.current;
+            if (v) v.paused ? v.play() : v.pause();
+            resetControlsTimer();
+          }
         }}
         onDoubleClick={(e) => {
           const v = videoRef.current;
@@ -710,7 +741,7 @@ function WatchPage() {
         {/* Progress Bar */}
         <div
           ref={progressBarRef}
-          className="group relative w-full h-2 sm:h-1.5 bg-white/20 rounded-full cursor-pointer mb-3 sm:mb-5 hover:h-2.5 transition-all touch-none"
+          className="group relative w-full h-3 sm:h-1.5 bg-white/20 rounded-full cursor-pointer mb-3 sm:mb-5 hover:h-2.5 transition-all"
           onClick={seekTo}
           onMouseMove={handleProgressMouseMove}
           onMouseLeave={handleProgressMouseLeave}
@@ -755,15 +786,15 @@ function WatchPage() {
                 const v = videoRef.current;
                 if (v) v.paused ? v.play() : v.pause();
               }}
-              className="text-white hover:text-arc-accent transition"
+              className="text-white hover:text-arc-accent transition p-2 -m-2 active:scale-90"
             >
               {playing ? (
-                <svg width="24" height="24" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="28" height="28" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
                   <rect x="6" y="4" width="4" height="16" rx="1" />
                   <rect x="14" y="4" width="4" height="16" rx="1" />
                 </svg>
               ) : (
-                <svg width="24" height="24" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="28" height="28" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               )}
@@ -774,7 +805,7 @@ function WatchPage() {
               onClick={() => {
                 if (videoRef.current) videoRef.current.currentTime -= 10;
               }}
-              className="text-white/70 hover:text-white transition hidden sm:block"
+              className="text-white/70 hover:text-white active:text-arc-accent transition p-2 -m-2 active:scale-90"
             >
               <svg
                 width="22"
@@ -805,7 +836,7 @@ function WatchPage() {
               onClick={() => {
                 if (videoRef.current) videoRef.current.currentTime += 10;
               }}
-              className="text-white/70 hover:text-white transition hidden sm:block"
+              className="text-white/70 hover:text-white active:text-arc-accent transition p-2 -m-2 active:scale-90"
             >
               <svg
                 width="22"
@@ -933,7 +964,7 @@ function WatchPage() {
             <div className="relative">
               <button
                 onClick={() => setShowSubMenu(!showSubMenu)}
-                className={`text-white/70 hover:text-white transition ${activeSub ? "text-arc-accent" : ""}`}
+                className={`text-white/70 hover:text-white transition p-2 -m-2 active:scale-90 ${activeSub ? "text-arc-accent" : ""}`}
                 title="Subtitles"
               >
                 <svg
@@ -965,7 +996,7 @@ function WatchPage() {
             {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
-              className="text-white/70 hover:text-white transition"
+              className="text-white/70 hover:text-white transition p-2 -m-2 active:scale-90"
             >
               {fullscreen ? (
                 <svg
