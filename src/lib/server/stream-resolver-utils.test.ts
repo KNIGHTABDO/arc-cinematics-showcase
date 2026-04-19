@@ -74,4 +74,16 @@ describe("stream resolver utilities", () => {
     });
     assert.equal(byIdPlusOne?.id, 11);
   });
+
+  it("returns largest non-extra episode when no explicit episode match exists", () => {
+    const files: RDTorrentFile[] = [
+      { id: 1, path: "/FROM/Extras/featurette.mkv", bytes: 50_000_000 },
+      { id: 2, path: "/FROM/sample.mkv", bytes: 10_000_000 },
+      { id: 3, path: "/FROM/Episode.03.mkv", bytes: 900_000_000 },
+      { id: 4, path: "/FROM/Episode.04.mkv", bytes: 1_100_000_000 },
+    ];
+
+    const picked = chooseTargetFile(files, { type: "tv", season: 1, episode: 1 });
+    assert.equal(picked?.id, 4);
+  });
 });

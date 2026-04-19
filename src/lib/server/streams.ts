@@ -438,6 +438,7 @@ async function resolveCandidate(
 
         let lastUnrestrictError: string | null = null;
         let lastPreflight: { ok: boolean; status?: number; contentType?: string | null } | undefined;
+        let firstUnrestrictedUrl: string | null = null;
 
         for (const linkIdx of linkOrder) {
           const restrictedLink = info.links[linkIdx] as string;
@@ -445,6 +446,7 @@ async function resolveCandidate(
 
           try {
             streamUrl = await unrestrictLink(restrictedLink);
+            if (!firstUnrestrictedUrl) firstUnrestrictedUrl = streamUrl;
           } catch (e: unknown) {
             lastUnrestrictError = e instanceof Error ? e.message : "RD unrestrict failed";
             continue;
@@ -462,6 +464,20 @@ async function resolveCandidate(
 
           return {
             streamUrl,
+            torrentId,
+            selectedFile: selectedFile ?? undefined,
+          };
+        }
+
+        // Important fallback: some hosts block server-side probes (range/plain GET)
+        // while the exact same unrestricted URL is playable in browser/video player.
+        if (firstUnrestrictedUrl) {
+          attempt.preflight = lastPreflight;
+          attempt.status = "success";
+          attempt.endedAt = new Date().toISOString();
+
+          return {
+            streamUrl: firstUnrestrictedUrl,
             torrentId,
             selectedFile: selectedFile ?? undefined,
           };
