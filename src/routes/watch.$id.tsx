@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getStreamForMovie } from "@/lib/server/streams";
+import { getSubtitlesForMedia, getSubtitleVtt } from "@/lib/server/subtitles";
 import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
 import { supabase } from "@/lib/supabase";
 import { useSettings } from "@/lib/store/settings";
@@ -59,6 +60,7 @@ function WatchPage() {
   const [buffering, setBuffering] = useState(false);
   const [subtitles, setSubtitles] = useState<SubtitleTrack[]>([]);
   const [activeSub, setActiveSub] = useState<string | null>(null);
+  const [activeSubVttUrl, setActiveSubVttUrl] = useState<string | null>(null);
   const [showSubMenu, setShowSubMenu] = useState(false);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
@@ -100,7 +102,14 @@ function WatchPage() {
           }
         }
 
-        const res: any = await getStreamForMovie({ data: { watchId: id, preferredQuality: quality } });
+        const clientProfile =
+          typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(navigator.userAgent)
+            ? "ios_safari"
+            : "default";
+
+        const res: any = await getStreamForMovie({
+          data: { watchId: id, preferredQuality: quality, clientProfile },
+        });
         if (cancelled) return;
 
         if (res.error || res.errorCode) {
@@ -132,51 +141,105 @@ function WatchPage() {
     };
   }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, isKids, quality]);
 
-  // Fetch subtitles from subdl.com (free, no key)
+  // Fetch subtitles via server function and convert selected track to VTT blob URL
   useEffect(() => {
+    let cancelled = false;
+
     const fetchSubs = async () => {
       try {
-        // Get IMDB ID from the correct TMDB endpoint
         const details =
           parsed.type === "tv"
             ? await getTVDetails({ data: parsed.tmdbId })
             : await getMovieDetails({ data: parsed.tmdbId });
 
         const imdbId = details?.external_ids?.imdb_id || details?.imdb_id;
-        if (!imdbId) return;
+        if (!imdbId || cancelled) return;
 
-        // SubDL free /auto API frequently returns 422 for TV series, so we restrict it to movies for now
-        if (parsed.type === "tv") return;
+        const result: any = await getSubtitlesForMedia({
+          data: {
+            imdbId,
+            type: parsed.type,
+            season: parsed.season,
+            episode: parsed.episode,
+            language: profile?.subtitle_language || undefined,
+          },
+        });
 
-        const res = await fetch(`https://api.subdl.com/auto?imdb_id=${imdbId}&type=movie`);
-        if (!res.ok) return;
+        if (cancelled) return;
 
-        const data = await res.json().catch(() => ({}));
-        if (data.subtitles && data.subtitles.length > 0) {
-          const tracks: SubtitleTrack[] = data.subtitles
-            .slice(0, 15)
-            .map((s: any) => ({
-              label: s.language || s.lang || "Unknown",
-              lang: s.lang || "",
-              url: s.url || "",
-            }))
-            .filter((s: SubtitleTrack) => s.url);
-          setSubtitles(tracks);
-          if (profile?.subtitle_language) {
-            const preferred = tracks.find((s) =>
-              s.lang.toLowerCase().includes(profile.subtitle_language.toLowerCase()),
-            );
-            if (preferred) setActiveSub(preferred.url);
-          }
+        const tracks: SubtitleTrack[] = Array.isArray(result?.tracks)
+          ? result.tracks
+              .map((s: any) => ({
+                label: String(s?.label || "Unknown"),
+                lang: String(s?.lang || ""),
+                url: String(s?.url || ""),
+              }))
+              .filter((s: SubtitleTrack) => s.url)
+          : [];
+
+        setSubtitles(tracks);
+
+        if (tracks.length === 0) {
+          setActiveSub(null);
+          setActiveSubVttUrl(null);
+          return;
+        }
+
+        const preferred = profile?.subtitle_language
+          ? tracks.find((s) => s.lang.toLowerCase().includes(profile.subtitle_language.toLowerCase()))
+          : tracks[0];
+
+        if (preferred) {
+          setActiveSub(preferred.url);
         }
       } catch (e) {
         console.warn("[ARC] Subtitle fetch failed:", e);
       }
     };
-    fetchSubs();
-  }, [id, profile?.subtitle_language]);
 
-  // Load saved progress from Supabase
+    void fetchSubs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, profile?.subtitle_language]);
+
+  // Convert selected subtitle to VTT object URL for <track>
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const loadVtt = async () => {
+      if (!activeSub) {
+        setActiveSubVttUrl(null);
+        return;
+      }
+
+      try {
+        const result: any = await getSubtitleVtt({ data: { url: activeSub } });
+        if (cancelled) return;
+
+        if (!result?.vtt) {
+          setActiveSubVttUrl(null);
+          return;
+        }
+
+        const blob = new Blob([result.vtt], { type: "text/vtt;charset=utf-8" });
+        objectUrl = URL.createObjectURL(blob);
+        setActiveSubVttUrl(objectUrl);
+      } catch {
+        if (!cancelled) setActiveSubVttUrl(null);
+      }
+    };
+
+    void loadVtt();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [activeSub]);
+
   useEffect(() => {
     const profileId = localStorage.getItem("arc_active_profile");
     if (!profileId || !videoRef.current) return;
@@ -392,6 +455,7 @@ function WatchPage() {
         ref={videoRef}
         src={streamUrl}
         autoPlay
+        crossOrigin="anonymous"
         playsInline
         preload="metadata"
         className="h-full w-full object-contain"
@@ -424,7 +488,17 @@ function WatchPage() {
           }
           setError("Playback failed for this stream URL.");
         }}
-      />
+      >
+        {activeSubVttUrl && (
+          <track
+            kind="subtitles"
+            src={activeSubVttUrl}
+            srcLang={(profile?.subtitle_language || "en").slice(0, 2)}
+            label={t("player.subtitles", lang)}
+            default
+          />
+        )}
+      </video>
 
       {/* Buffering Overlay */}
       {(buffering || !streamReady) && (
@@ -709,6 +783,7 @@ function WatchPage() {
                   <button
                     onClick={() => {
                       setActiveSub(null);
+                      setActiveSubVttUrl(null);
                       setShowSubMenu(false);
                     }}
                     className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${!activeSub ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}

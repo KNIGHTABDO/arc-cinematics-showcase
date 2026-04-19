@@ -55,6 +55,18 @@ describe("stream resolver utilities", () => {
     assert.equal(ranked[0].infoHash, "b");
   });
 
+  it("rankCandidates applies iOS Safari container bias against mkv", () => {
+    const ranked = rankCandidates(
+      [
+        { infoHash: "a", magnet: "magnet:?xt=urn:btih:a", title: "Show.S01E01.1080p.WEB-DL.mkv.x264" },
+        { infoHash: "b", magnet: "magnet:?xt=urn:btih:b", title: "Show.S01E01.1080p.WEB-DL.mp4.x264" },
+      ],
+      { type: "tv", season: 1, episode: 1, preferredQuality: "1080", clientProfile: "ios_safari" },
+    );
+
+    assert.equal(ranked[0].infoHash, "b");
+  });
+
   it("chooseTargetFile prefers explicit episode match for TV", () => {
     const files: RDTorrentFile[] = [
       { id: 1, path: "/Show.S01E02.mkv", bytes: 1_000_000_000 },
@@ -66,7 +78,7 @@ describe("stream resolver utilities", () => {
     assert.equal(picked?.id, 2);
   });
 
-  it("chooseTargetFile falls back to largest video for movies", () => {
+  it("chooseTargetFile prefers browser-friendly container for movies", () => {
     const files: RDTorrentFile[] = [
       { id: 1, path: "/movie-480p.mp4", bytes: 700_000_000 },
       { id: 2, path: "/movie-1080p.mkv", bytes: 2_100_000_000 },
@@ -74,7 +86,7 @@ describe("stream resolver utilities", () => {
     ];
 
     const picked = chooseTargetFile(files, { type: "movie" });
-    assert.equal(picked?.id, 2);
+    assert.equal(picked?.id, 1);
   });
 
   it("chooseTargetFile prefers preferredFileIdx mappings before episode fallback", () => {
@@ -97,6 +109,16 @@ describe("stream resolver utilities", () => {
       preferredFileIdx: 11,
     });
     assert.equal(byIdPlusOne?.id, 11);
+  });
+
+  it("chooseTargetFile prioritizes mp4 over mkv when bytes are similar", () => {
+    const files: RDTorrentFile[] = [
+      { id: 1, path: "/Show.S01E01.1080p.mkv", bytes: 1_000_000_000 },
+      { id: 2, path: "/Show.S01E01.1080p.mp4", bytes: 990_000_000 },
+    ];
+
+    const picked = chooseTargetFile(files, { type: "tv", season: 1, episode: 1 });
+    assert.equal(picked?.id, 2);
   });
 
   it("returns largest non-extra episode when no explicit episode match exists", () => {

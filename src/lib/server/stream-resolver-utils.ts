@@ -46,6 +46,7 @@ export function scoreCandidate(
     season?: number;
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
+    clientProfile?: "default" | "ios_safari";
   },
 ): number {
   const text = sanitizeTitle(candidate.title);
@@ -62,6 +63,14 @@ export function scoreCandidate(
   if (text.includes("x264") || text.includes("h264") || text.includes("avc")) score += 26;
   if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 85;
   if (text.includes("hdr") || text.includes("dv") || text.includes("dolby vision")) score -= 22;
+
+  // iOS Safari profile: heavily deprioritize MKV/matroska, boost MP4/M4V
+  if (opts.clientProfile === "ios_safari") {
+    const isMkv = /\bmkv\b|\bmatroska\b/i.test(candidate.title);
+    const isMp4 = /\bmp4\b|\bm4v\b/i.test(candidate.title);
+    if (isMkv) score -= 150;
+    if (isMp4) score += 50;
+  }
 
   // Penalize bad sources
   if (
@@ -109,6 +118,7 @@ export function rankCandidates(
     season?: number;
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
+    clientProfile?: "default" | "ios_safari";
   },
 ): Array<StreamCandidate & { score: number }> {
   const dedup = new Map<string, StreamCandidate>();
@@ -143,11 +153,23 @@ export function chooseTargetFile(
     if (byIdPlusOne) return byIdPlusOne;
   }
 
+  const containerRank = (path: string) => {
+    const p = (path || "").toLowerCase();
+    if (p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov")) return 3;
+    if (p.endsWith(".webm") || p.endsWith(".ts")) return 2;
+    if (p.endsWith(".mkv")) return 1;
+    return 0;
+  };
+
   if (opts.type === "tv") {
     const matchers = buildEpisodeMatchers(opts.season, opts.episode);
     const byEpisode = pool.filter((f) => matchers.some((rx) => rx.test(f.path)));
     if (byEpisode.length) {
-      return byEpisode.reduce((best, cur) => (cur.bytes > best.bytes ? cur : best));
+      return byEpisode.sort((a, b) => {
+        const rankDelta = containerRank(b.path) - containerRank(a.path);
+        if (rankDelta !== 0) return rankDelta;
+        return b.bytes - a.bytes;
+      })[0];
     }
 
     // Avoid obvious extras when episode match is absent
@@ -162,9 +184,17 @@ export function chooseTargetFile(
     });
 
     if (filtered.length) {
-      return filtered.reduce((best, cur) => (cur.bytes > best.bytes ? cur : best));
+      return filtered.sort((a, b) => {
+        const rankDelta = containerRank(b.path) - containerRank(a.path);
+        if (rankDelta !== 0) return rankDelta;
+        return b.bytes - a.bytes;
+      })[0];
     }
   }
 
-  return pool.reduce((best, cur) => (cur.bytes > best.bytes ? cur : best));
+  return pool.sort((a, b) => {
+    const rankDelta = containerRank(b.path) - containerRank(a.path);
+    if (rankDelta !== 0) return rankDelta;
+    return b.bytes - a.bytes;
+  })[0] ?? null;
 }

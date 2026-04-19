@@ -538,6 +538,7 @@ async function telemetryLog(diag: ResolverDiagnostics) {
 const inputSchema = z.object({
   watchId: z.string().min(1),
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
+  clientProfile: z.enum(["default", "ios_safari"]).optional(),
 });
 
 export const getStreamForMovie = createServerFn({ method: "POST" })
@@ -545,6 +546,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const watchId = data.watchId;
     const preferredQuality = data.preferredQuality ?? "auto";
+    const clientProfile = data.clientProfile ?? "default";
     if (!RD_TOKEN) {
       return {
         errorCode: "NO_RDTOKEN" as ResolveErrorCode,
@@ -586,6 +588,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         season: parsed.season,
         episode: parsed.episode,
         preferredQuality,
+        clientProfile,
       }).slice(0, RESOLVER_MAX_CANDIDATES);
 
       diagnostics.candidateCount = ranked.length;
@@ -636,6 +639,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
           season: parsed.season,
           episode: parsed.episode,
           selectedQuality: preferredQuality,
+          clientProfile,
           diagnostics,
         };
       }

@@ -14,7 +14,15 @@
 - Increase browser-compatibility weighting to prefer AVC/x264 streams over HEVC/x265 for equivalent quality, improving iPhone Safari playback reliability.
 - Watch player now supports a manual quality menu and retries resolver with the selected preference.
 - Watch player now switches to next backup stream URL on `<video>` error to avoid indefinite `0:00` stalls.
-- Add/expand resolver utility tests for TV file-index mapping fallbacks (`array index`, `file id`, and `file id + 1`).
+- Add iOS Safari-aware resolver profile (`clientProfile`) so candidate ranking can apply container-specific penalties.
+- Penalize MKV/Matroska and boost MP4/M4V for iOS Safari clients during candidate scoring.
+- File selection now prefers browser-friendly containers (MP4/M4V/MOV) over MKV before bytes tie-breaks for both TV and movie flows.
+- Replace direct client subtitle API calls with server subtitle pipeline for both movie and TV:
+  - include `season_number` + `episode_number` for TV subtitle queries,
+  - normalize subtitle URLs and convert to WebVTT server-side,
+  - render subtitles via blob-backed VTT track in player.
+- Add `crossOrigin="anonymous"` to player video element to satisfy strict Safari text-track rendering requirements.
+- Add/expand resolver utility tests for TV file-index mapping fallbacks (`array index`, `file id`, and `file id + 1`), iOS Safari MKV bias, and browser-friendly container preference.
 - Add Supabase-backed stream resolver telemetry (`stream_resolver_attempts`) and health view (`stream_health_recent`).
 - Enforce kids-profile content restrictions across Movies, Series, Discover, Search, title details, TV details, and watch playback entry.
 - Scope Continue Watching refresh to the active profile and ensure TV entries route correctly to `/watch/$id`.
