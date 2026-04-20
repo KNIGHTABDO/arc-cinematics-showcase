@@ -17,6 +17,11 @@
 - Add iOS Safari-aware resolver profile (`clientProfile`) so candidate ranking can apply container-specific penalties.
 - Penalize MKV/Matroska and boost MP4/M4V for iOS Safari clients during candidate scoring.
 - File selection now prefers browser-friendly containers (MP4/M4V/MOV) over MKV before bytes tie-breaks for both TV and movie flows.
+- Add optional iOS quality hardening flags (`VITE_IOS_QUALITY_*`) for safe rollout without subtitle-pipeline changes:
+  - hard-reject iOS trash release tags (`cam/hdcam/ts/hdts/telesync/workprint`) when enabled,
+  - enforce minimum bytes floors for advertised `1080p`/`720p` files on iOS,
+  - return explicit `IOS_NO_ACCEPTABLE_QUALITY` resolver error when all iOS-compatible files fail policy,
+  - attach per-attempt reject reasons in resolver diagnostics for debuggability.
 - Replace direct client subtitle API calls with server subtitle pipeline for both movie and TV:
   - include `season_number` + `episode_number` for TV subtitle queries,
   - normalize subtitle URLs and convert to WebVTT server-side,

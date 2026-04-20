@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { getStreamForMovie } from "@/lib/server/streams";
 import { getSubtitlesForMedia, getSubtitleVtt } from "@/lib/server/subtitles";
 import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
-import { supabase } from "@/lib/supabase";
 import { useSettings } from "@/lib/store/settings";
 import { useSubtitlesStore } from "@/lib/store/subtitles";
 import { t } from "@/lib/i18n";
@@ -82,6 +82,21 @@ function WatchPage() {
 
     const load = async () => {
       try {
+        const { data: authData } = await supabase.auth.getSession();
+        const accessToken = authData.session?.access_token;
+        if (!accessToken) {
+          setError("Please log in to watch.");
+          navigate({ to: "/login" });
+          return;
+        }
+
+        const profileId = profile?.id || localStorage.getItem("arc_active_profile");
+        if (!profileId) {
+          setError("Please choose a profile.");
+          navigate({ to: "/profiles" });
+          return;
+        }
+
         if (parsed.type === "tv") {
           const show: any = await getTVDetails({ data: parsed.tmdbId });
           if (cancelled) return;
@@ -117,11 +132,21 @@ function WatchPage() {
             : "default";
 
         const res: any = await getStreamForMovie({
-          data: { watchId: id, preferredQuality: quality, clientProfile },
+          data: {
+            watchId: `${id}|p-${profileId}`,
+            preferredQuality: quality,
+            clientProfile,
+            accessToken,
+          },
         });
         if (cancelled) return;
 
         if (res.error || res.errorCode) {
+          if (res.errorCode === "IOS_NO_ACCEPTABLE_QUALITY") {
+            throw new Error(
+              "No acceptable iOS-quality stream found for this title. Try another quality level or title."
+            );
+          }
           const code = res.errorCode ? `[${res.errorCode}] ` : "";
           throw new Error(`${code}${res.error || "Failed to locate stream."}`);
         }

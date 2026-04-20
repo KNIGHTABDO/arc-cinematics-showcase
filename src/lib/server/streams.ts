@@ -1,8 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import {
-  chooseTargetFile,
+  chooseTargetFileDetailed,
   rankCandidates,
+  type IOSQualityHardeningOptions,
   type RDTorrentFile,
   type StreamCandidate,
 } from "./stream-resolver-utils";
@@ -15,6 +16,11 @@ const RESOLVER_MAX_CANDIDATES = 5;
 const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
 const RESOLVER_POLL_DELAY_MS = 1800;
 const PREFLIGHT_TIMEOUT_MS = 3500;
+
+const IOS_QUALITY_HARDENING_ENABLED = (import.meta.env.VITE_IOS_QUALITY_HARDENING_ENABLED ?? "false") === "true";
+const IOS_QUALITY_HARDENING_REJECT_TRASH = (import.meta.env.VITE_IOS_QUALITY_HARDENING_REJECT_TRASH ?? "true") !== "false";
+const IOS_QUALITY_MIN_BYTES_1080 = Number.parseInt(import.meta.env.VITE_IOS_QUALITY_MIN_BYTES_1080 ?? "1500000000", 10);
+const IOS_QUALITY_MIN_BYTES_720 = Number.parseInt(import.meta.env.VITE_IOS_QUALITY_MIN_BYTES_720 ?? "800000000", 10);
 
 type MediaType = "movie" | "tv";
 
@@ -30,6 +36,7 @@ type ResolveErrorCode =
   | "RD_STATUS_FAIL"
   | "STREAM_PREFLIGHT_FAIL"
   | "ALL_CANDIDATES_FAILED"
+  | "IOS_NO_ACCEPTABLE_QUALITY"
   | "UNKNOWN";
 
 export interface ResolverAttempt {
@@ -44,6 +51,7 @@ export interface ResolverAttempt {
   selectedFile?: { id: number; path: string; bytes: number };
   torrentId?: string;
   preflight?: { ok: boolean; status?: number; contentType?: string | null };
+  rejectReasons?: string[];
 }
 
 export interface ResolverDiagnostics {
@@ -81,6 +89,18 @@ interface RDAddMagnetError {
 interface RDUnrestrictResponse {
   error?: string;
   download?: string;
+}
+
+function getIOSQualityHardeningConfig(clientProfile?: "default" | "ios_safari"): IOSQualityHardeningOptions | undefined {
+  if (clientProfile !== "ios_safari") return undefined;
+  if (!IOS_QUALITY_HARDENING_ENABLED) return undefined;
+
+  return {
+    enabled: true,
+    rejectTrashReleases: IOS_QUALITY_HARDENING_REJECT_TRASH,
+    minBytes1080: Number.isFinite(IOS_QUALITY_MIN_BYTES_1080) ? IOS_QUALITY_MIN_BYTES_1080 : 1_500_000_000,
+    minBytes720: Number.isFinite(IOS_QUALITY_MIN_BYTES_720) ? IOS_QUALITY_MIN_BYTES_720 : 800_000_000,
+  };
 }
 
 function parseWatchId(id: string): {
@@ -335,7 +355,13 @@ async function deleteTorrentBestEffort(torrentId: string): Promise<void> {
 
 async function resolveCandidate(
   candidate: StreamCandidate & { score: number },
-  media: { type: MediaType; season?: number; episode?: number; clientProfile?: "default" | "ios_safari" },
+  media: {
+    type: MediaType;
+    season?: number;
+    episode?: number;
+    clientProfile?: "default" | "ios_safari";
+    iosQualityHardening?: IOSQualityHardeningOptions;
+  },
   diagnostics: ResolverDiagnostics,
 ): Promise<{
   streamUrl: string;
@@ -382,13 +408,27 @@ async function resolveCandidate(
 
       const files = (Array.isArray(info?.files) ? info.files : []) as RDTorrentFile[];
       if (!selectedFile && files.length > 0) {
-        selectedFile = chooseTargetFile(files, {
+        const selection = chooseTargetFileDetailed(files, {
           type: media.type,
           season: media.season,
           episode: media.episode,
           preferredFileIdx: candidate.fileIdx,
           clientProfile: media.clientProfile,
+          iosQualityHardening: media.iosQualityHardening,
         });
+        selectedFile = selection.file;
+
+        if (selection.rejectDetails?.length) {
+          attempt.rejectReasons = selection.rejectDetails;
+        }
+
+        if (selection.rejectReason === "IOS_NO_ACCEPTABLE_QUALITY") {
+          attempt.errorCode = "IOS_NO_ACCEPTABLE_QUALITY";
+          attempt.error = "iOS quality hardening rejected all iOS-compatible files for this candidate";
+          attempt.endedAt = new Date().toISOString();
+          await deleteTorrentBestEffort(torrentId);
+          return null;
+        }
 
         if (selectedFile) {
           attempt.selectedFile = {
@@ -540,6 +580,7 @@ const inputSchema = z.object({
   watchId: z.string().min(1),
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
   clientProfile: z.enum(["default", "ios_safari"]).optional(),
+  accessToken: z.string().min(20),
 });
 
 export const getStreamForMovie = createServerFn({ method: "POST" })
@@ -548,6 +589,8 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
     const watchId = data.watchId;
     const preferredQuality = data.preferredQuality ?? "auto";
     const clientProfile = data.clientProfile ?? "default";
+    const iosQualityHardening = getIOSQualityHardeningConfig(clientProfile);
+    const accessToken = data.accessToken.trim();
     if (!RD_TOKEN) {
       return {
         errorCode: "NO_RDTOKEN" as ResolveErrorCode,
@@ -562,7 +605,45 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       };
     }
 
-    const parsed = parseWatchId(watchId);
+    const auth = await supabase.auth.getUser(accessToken);
+    if (auth.error || !auth.data.user) {
+      return {
+        errorCode: "UNAUTHORIZED" as ResolveErrorCode,
+        error: "Authentication required.",
+      };
+    }
+
+    const userId = auth.data.user.id;
+
+    const profileId = (() => {
+      const p = /(?:^|\|)p-([0-9a-f-]{8,})(?:\||$)/i.exec(watchId);
+      return p?.[1] || null;
+    })();
+
+    if (!profileId) {
+      return {
+        errorCode: "PROFILE_REQUIRED" as ResolveErrorCode,
+        error: "Profile context is required.",
+      };
+    }
+
+    const profileCheck = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", profileId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (profileCheck.error || !profileCheck.data) {
+      return {
+        errorCode: "PROFILE_FORBIDDEN" as ResolveErrorCode,
+        error: "Profile access denied.",
+      };
+    }
+
+    const normalizedWatchId = watchId.replace(/\|p-[0-9a-f-]{8,}/i, "");
+
+    const parsed = parseWatchId(normalizedWatchId);
     const diagnostics: ResolverDiagnostics = {
       watchId,
       mediaType: parsed.type,
@@ -590,6 +671,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         episode: parsed.episode,
         preferredQuality,
         clientProfile,
+        iosQualityHardening,
       }).slice(0, RESOLVER_MAX_CANDIDATES);
 
       diagnostics.candidateCount = ranked.length;
@@ -615,7 +697,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       }
 
       for (const candidate of ranked) {
-        const resolved = await resolveCandidate(candidate, { ...parsed, clientProfile }, diagnostics);
+        const resolved = await resolveCandidate(candidate, { ...parsed, clientProfile, iosQualityHardening }, diagnostics);
         if (!resolved) continue;
 
         diagnostics.selected = {
@@ -647,6 +729,16 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       }
 
       await telemetryLog(diagnostics);
+
+      const iosQualityRejected = diagnostics.attempts.length > 0 && diagnostics.attempts.every((a) => a.errorCode === "IOS_NO_ACCEPTABLE_QUALITY");
+
+      if (iosQualityRejected) {
+        return {
+          errorCode: "IOS_NO_ACCEPTABLE_QUALITY" as ResolveErrorCode,
+          error: "No acceptable iOS-compatible quality stream found. Try another title or quality setting.",
+          diagnostics,
+        };
+      }
 
       return {
         errorCode: "ALL_CANDIDATES_FAILED" as ResolveErrorCode,

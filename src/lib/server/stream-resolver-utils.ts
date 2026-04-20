@@ -12,11 +12,36 @@ export interface StreamCandidate {
   fileIdx?: number;
 }
 
+export interface IOSQualityHardeningOptions {
+  enabled?: boolean;
+  rejectTrashReleases?: boolean;
+  minBytes1080?: number;
+  minBytes720?: number;
+}
+
+export interface FileSelectionDetails {
+  file: RDTorrentFile | null;
+  rejectReason?: "IOS_NO_ACCEPTABLE_QUALITY";
+  rejectDetails?: string[];
+}
+
 function sanitizeTitle(input: string): string {
   return (input || "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function hasTrashReleaseTag(text: string): boolean {
+  return /\b(hdcam|camrip|cam|hdts|telesync|ts|workprint)\b/i.test(text);
+}
+
+function parseQualityTag(text: string): "2160" | "1080" | "720" | "480" | null {
+  if (/\b2160p?\b|\b4k\b/i.test(text)) return "2160";
+  if (/\b1080p?\b/i.test(text)) return "1080";
+  if (/\b720p?\b/i.test(text)) return "720";
+  if (/\b480p?\b/i.test(text)) return "480";
+  return null;
 }
 
 export function buildEpisodeMatchers(season?: number, episode?: number): RegExp[] {
@@ -47,6 +72,7 @@ export function scoreCandidate(
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
     clientProfile?: "default" | "ios_safari";
+    iosQualityHardening?: IOSQualityHardeningOptions;
   },
 ): number {
   const text = sanitizeTitle(candidate.title);
@@ -56,15 +82,17 @@ export function scoreCandidate(
   else if (text.includes("1080")) score += 28;
   else if (text.includes("720")) score += 18;
 
-  if (text.includes("web dl") || text.includes("web-dl") || text.includes("webrip")) score += 8;
-  if (text.includes("bluray") || text.includes("bdrip") || text.includes("remux")) score += 10;
+  const isWebSource = text.includes("web dl") || text.includes("web-dl") || text.includes("webrip");
+  const isPremiumSource = text.includes("bluray") || text.includes("bdrip") || text.includes("remux");
+  if (isWebSource) score += 8;
+  if (isPremiumSource) score += 10;
 
   // Audio compatibility logic: Browsers cannot play DDP5.1 / EAC3 / DTS / TrueHD
   if (
-    text.includes("ddp") || 
-    text.includes("eac3") || 
-    text.includes("dts") || 
-    text.includes("truehd") || 
+    text.includes("ddp") ||
+    text.includes("eac3") ||
+    text.includes("dts") ||
+    text.includes("truehd") ||
     text.includes("atmos") ||
     text.includes("flac")
   ) {
@@ -79,6 +107,8 @@ export function scoreCandidate(
   if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 85;
   if (text.includes("hdr") || text.includes("dv") || text.includes("dolby vision")) score -= 22;
 
+  const hardeningEnabled = opts.iosQualityHardening?.enabled === true;
+
   // iOS Safari profile: effectively filter out non-MP4 containers
   // iOS cannot play MKV, WebM, or AVI — only MP4/M4V/MOV containers work
   if (opts.clientProfile === "ios_safari") {
@@ -88,9 +118,20 @@ export function scoreCandidate(
     const isAvi = /\bavi\b/i.test(candidate.title);
     if (isMp4) score += 200;
     if (isMkv || isWebm || isAvi) score -= 5000; // effectively filter out
+
+    if (hardeningEnabled) {
+      if (opts.iosQualityHardening?.rejectTrashReleases !== false && hasTrashReleaseTag(text)) {
+        score -= 10000;
+      }
+
+      // On iOS, promote known better source tags and penalize unknown source labels a bit.
+      if (isPremiumSource) score += 20;
+      else if (isWebSource) score += 10;
+      else score -= 20;
+    }
   }
 
-  // Penalize bad sources
+  // Penalize bad sources generally
   if (
     text.includes("cam") ||
     text.includes("hdcam") ||
@@ -137,6 +178,7 @@ export function rankCandidates(
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
     clientProfile?: "default" | "ios_safari";
+    iosQualityHardening?: IOSQualityHardeningOptions;
   },
 ): Array<StreamCandidate & { score: number }> {
   const dedup = new Map<string, StreamCandidate>();
@@ -150,28 +192,11 @@ export function rankCandidates(
     .sort((a, b) => b.score - a.score);
 }
 
-export function chooseTargetFile(
-  files: RDTorrentFile[],
+function pickFromPool(
+  pool: RDTorrentFile[],
   opts: { type: "movie" | "tv"; season?: number; episode?: number; preferredFileIdx?: number; clientProfile?: "default" | "ios_safari" },
 ): RDTorrentFile | null {
-  if (!files?.length) return null;
-
-  let videoFiles = files.filter((f) => isLikelyVideoFile(f.path));
-
-  // iOS Safari: filter to MP4/M4V/MOV only — iOS cannot play MKV/WebM/AVI
-  if (opts.clientProfile === "ios_safari") {
-    const iosCompatible = videoFiles.filter((f) => {
-      const p = (f.path || "").toLowerCase();
-      return p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov");
-    });
-    if (iosCompatible.length > 0) {
-      videoFiles = iosCompatible;
-    }
-    // If no MP4 files exist, fall through to all video files — the player
-    // will show an error but at least we tried
-  }
-
-  const pool = videoFiles.length ? videoFiles : files;
+  if (!pool.length) return null;
 
   if (opts.preferredFileIdx != null) {
     const prefIdx = opts.preferredFileIdx;
@@ -202,11 +227,13 @@ export function chooseTargetFile(
     const matchers = buildEpisodeMatchers(opts.season, opts.episode);
     const byEpisode = pool.filter((f) => matchers.some((rx) => rx.test(f.path)));
     if (byEpisode.length) {
-      return byEpisode.sort((a, b) => {
-        const rankDelta = containerRank(b.path) - containerRank(a.path);
-        if (rankDelta !== 0) return rankDelta;
-        return b.bytes - a.bytes;
-      })[0];
+      return (
+        byEpisode.sort((a, b) => {
+          const rankDelta = containerRank(b.path) - containerRank(a.path);
+          if (rankDelta !== 0) return rankDelta;
+          return b.bytes - a.bytes;
+        })[0] ?? null
+      );
     }
 
     // Avoid obvious extras when episode match is absent
@@ -221,17 +248,110 @@ export function chooseTargetFile(
     });
 
     if (filtered.length) {
-      return filtered.sort((a, b) => {
-        const rankDelta = containerRank(b.path) - containerRank(a.path);
-        if (rankDelta !== 0) return rankDelta;
-        return b.bytes - a.bytes;
-      })[0];
+      return (
+        filtered.sort((a, b) => {
+          const rankDelta = containerRank(b.path) - containerRank(a.path);
+          if (rankDelta !== 0) return rankDelta;
+          return b.bytes - a.bytes;
+        })[0] ?? null
+      );
     }
   }
 
-  return pool.sort((a, b) => {
-    const rankDelta = containerRank(b.path) - containerRank(a.path);
-    if (rankDelta !== 0) return rankDelta;
-    return b.bytes - a.bytes;
-  })[0] ?? null;
+  return (
+    pool.sort((a, b) => {
+      const rankDelta = containerRank(b.path) - containerRank(a.path);
+      if (rankDelta !== 0) return rankDelta;
+      return b.bytes - a.bytes;
+    })[0] ?? null
+  );
+}
+
+export function chooseTargetFileDetailed(
+  files: RDTorrentFile[],
+  opts: {
+    type: "movie" | "tv";
+    season?: number;
+    episode?: number;
+    preferredFileIdx?: number;
+    clientProfile?: "default" | "ios_safari";
+    iosQualityHardening?: IOSQualityHardeningOptions;
+  },
+): FileSelectionDetails {
+  if (!files?.length) return { file: null };
+
+  let videoFiles = files.filter((f) => isLikelyVideoFile(f.path));
+
+  // iOS Safari: filter to MP4/M4V/MOV only — iOS cannot play MKV/WebM/AVI
+  let iosCompatible: RDTorrentFile[] = [];
+  if (opts.clientProfile === "ios_safari") {
+    iosCompatible = videoFiles.filter((f) => {
+      const p = (f.path || "").toLowerCase();
+      return p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov");
+    });
+    if (iosCompatible.length > 0) {
+      videoFiles = iosCompatible;
+    }
+    // If no MP4 files exist, fall through to all video files — the player
+    // will show an error but at least we tried
+  }
+
+  let pool = videoFiles.length ? videoFiles : files;
+
+  const hardening = opts.iosQualityHardening;
+  const hardeningEnabled = opts.clientProfile === "ios_safari" && hardening?.enabled === true;
+
+  if (hardeningEnabled && pool.length > 0) {
+    const minBytes1080 = Math.max(1, hardening?.minBytes1080 ?? 1_500_000_000);
+    const minBytes720 = Math.max(1, hardening?.minBytes720 ?? 800_000_000);
+    const rejectTrash = hardening?.rejectTrashReleases !== false;
+
+    const rejectDetails: string[] = [];
+    const accepted = pool.filter((f) => {
+      const text = sanitizeTitle(f.path || "");
+
+      if (rejectTrash && hasTrashReleaseTag(text)) {
+        rejectDetails.push(`trash_tag:${f.path}`);
+        return false;
+      }
+
+      const quality = parseQualityTag(text);
+      if (quality === "1080" && f.bytes < minBytes1080) {
+        rejectDetails.push(`below_1080_floor:${f.path}:${f.bytes}`);
+        return false;
+      }
+      if (quality === "720" && f.bytes < minBytes720) {
+        rejectDetails.push(`below_720_floor:${f.path}:${f.bytes}`);
+        return false;
+      }
+
+      return true;
+    });
+
+    if (accepted.length > 0) {
+      pool = accepted;
+    } else if (iosCompatible.length > 0) {
+      return {
+        file: null,
+        rejectReason: "IOS_NO_ACCEPTABLE_QUALITY",
+        rejectDetails,
+      };
+    }
+  }
+
+  return { file: pickFromPool(pool, opts) };
+}
+
+export function chooseTargetFile(
+  files: RDTorrentFile[],
+  opts: {
+    type: "movie" | "tv";
+    season?: number;
+    episode?: number;
+    preferredFileIdx?: number;
+    clientProfile?: "default" | "ios_safari";
+    iosQualityHardening?: IOSQualityHardeningOptions;
+  },
+): RDTorrentFile | null {
+  return chooseTargetFileDetailed(files, opts).file;
 }
