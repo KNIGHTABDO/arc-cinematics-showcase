@@ -15,6 +15,8 @@ const RESOLVER_MAX_CANDIDATES = 5;
 const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
 const RESOLVER_POLL_DELAY_MS = 1800;
 const PREFLIGHT_TIMEOUT_MS = 3500;
+const MEDIAFLOW_PROXY_PREFIX = "/mfproxy";
+const MEDIAFLOW_STREAM_PATH = "/proxy/stream";
 
 type MediaType = "movie" | "tv";
 
@@ -82,6 +84,32 @@ interface RDAddMagnetError {
 interface RDUnrestrictResponse {
   error?: string;
   download?: string;
+}
+
+function buildMediaFlowStreamUrl(sourceUrl: string, proxyPassword?: string): string {
+  const params = new URLSearchParams();
+  params.set("d", sourceUrl);
+  params.set("transcode", "true");
+
+  const pass = proxyPassword?.trim();
+  if (pass) {
+    params.set("api_password", pass);
+  }
+
+  return `${MEDIAFLOW_PROXY_PREFIX}${MEDIAFLOW_STREAM_PATH}?${params.toString()}`;
+}
+
+function uniqueUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const url of urls) {
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+  }
+
+  return out;
 }
 
 
@@ -555,14 +583,12 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
     const watchId = data.watchId;
     const preferredQuality = data.preferredQuality ?? "auto";
     const actualClientProfile = data.clientProfile ?? "default";
-    
-    // Check for MediaFlow configuration
-    const PROXY_URL = import.meta.env.VITE_MEDIAFLOW_PROXY_URL as string | undefined;
-    const PROXY_PASS = import.meta.env.VITE_MEDIAFLOW_PROXY_PASSWORD as string | undefined;
-    const hasProxy = Boolean(PROXY_URL && PROXY_PASS);
 
-    // If proxy is enabled, iOS can handle raw MKV files. We bypass the restrictive iOS filters.
-    const clientProfile = (hasProxy && actualClientProfile === "ios_safari") ? "default" : actualClientProfile;
+    const PROXY_PASS = import.meta.env.VITE_MEDIAFLOW_PROXY_PASSWORD as string | undefined;
+    const shouldUseIOSProxy = actualClientProfile === "ios_safari";
+
+    // iOS playback is routed through MediaFlow transcoding so MKV sources remain playable.
+    const clientProfile = shouldUseIOSProxy ? "default" : actualClientProfile;
     if (!RD_TOKEN) {
       return {
         errorCode: "NO_RDTOKEN" as ResolveErrorCode,
@@ -649,14 +675,19 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         let finalStreamUrl = resolved.streamUrl;
         let finalBackupStreams = resolved.backupStreams;
 
-        // If an iOS device and proxy is configured, wrap the RD URLs through the local /mfproxy path
-        // to bypass HTTPS mixed-content restrictions in Safari
-        if (actualClientProfile === "ios_safari" && hasProxy) {
-          const proxyPrefix = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/mfproxy` : '/mfproxy';
-          finalStreamUrl = `${proxyPrefix}/proxy/hls?url=${encodeURIComponent(resolved.streamUrl)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`;
-          finalBackupStreams = resolved.backupStreams.map((b) => 
-            `${proxyPrefix}/proxy/hls?url=${encodeURIComponent(b)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`
+        // iOS Safari cannot play MKV directly. Route iOS streams through MediaFlow transcoding.
+        if (shouldUseIOSProxy) {
+          const proxyWrappedPrimary = buildMediaFlowStreamUrl(resolved.streamUrl, PROXY_PASS);
+          const proxyWrappedBackups = resolved.backupStreams.map((b) =>
+            buildMediaFlowStreamUrl(b, PROXY_PASS),
           );
+
+          finalStreamUrl = proxyWrappedPrimary;
+          finalBackupStreams = uniqueUrls([
+            ...proxyWrappedBackups,
+            resolved.streamUrl,
+            ...resolved.backupStreams,
+          ]);
         }
 
         return {

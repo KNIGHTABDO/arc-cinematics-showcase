@@ -40,15 +40,9 @@ select * from public.stream_health_recent limit 50;
 - Watch player now auto-fails over to `backupStreams` on media element error (instead of staying stuck at `0:00`).
 - Watch player now supports manual quality preference (`Auto`, `2160p`, `1080p`, `720p`, `480p`) and re-resolves stream candidates using that preference.
 - Resolver now strongly favors browser-compatible AVC/x264 candidates over HEVC/x265 when quality is similar, to reduce iPhone/Safari `0:00` stalls.
-- Resolver now accepts a client profile and applies iOS Safari-specific container bias (penalizes MKV/Matroska, boosts MP4/M4V).
-- Target-file selection now prefers browser-friendly containers (MP4/M4V/MOV) before bytes-based fallback to reduce unsupported container picks.
-- Optional iOS quality hardening flags are available for safe rollout (`VITE_IOS_QUALITY_HARDENING_ENABLED`, `VITE_IOS_QUALITY_HARDENING_REJECT_TRASH`, `VITE_IOS_QUALITY_MIN_BYTES_1080`, `VITE_IOS_QUALITY_MIN_BYTES_720`):
-  - when enabled for iOS profile, resolver hard-rejects obvious trash tags (`cam/hdcam/ts/hdts/telesync/workprint`),
-  - enforces minimum bytes floors for advertised `1080p`/`720p` files,
-  - emits explicit `IOS_NO_ACCEPTABLE_QUALITY` error instead of silently returning low-grade streams,
-  - records reject reasons in resolver diagnostics for postmortem debugging.
+- Resolver now accepts a client profile and routes iOS streams through MediaFlow proxy transcoding (`/mfproxy/proxy/stream?d=...&transcode=true`) so MKV sources remain playable on Safari.
+- `vercel.json` rewrite forwards `/mfproxy/:path*` to the OCI MediaFlow instance, preventing mixed-content failures on HTTPS pages.
 - Subtitle pipeline now uses server-side SubDL search + conversion for both movies and TV episodes (with `season_number`/`episode_number`), then mounts blob-backed VTT tracks.
-- Player `<video>` now sets `crossOrigin="anonymous"` to satisfy Safari/WebKit text-track rendering rules.
 - Kids profile protections are enforced on browse/discover/search/detail/watch flows to prevent direct-link bypass.
 - Continue Watching now rebinds to the active profile ID, reducing cross-profile stale rows.
 

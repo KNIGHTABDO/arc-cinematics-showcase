@@ -619,8 +619,8 @@ function WatchPage() {
             const code = mediaError.code;
             if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
               setError(
-                "This stream format is not compatible with your device. " +
-                "iOS only supports MP4 video files. Try a different title or quality setting."
+                "This stream could not be loaded on iOS. " +
+                "The streaming proxy is unavailable or returned an invalid transcode response. Please try again in a moment."
               );
               return;
             }
