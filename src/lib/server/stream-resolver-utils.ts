@@ -12,17 +12,8 @@ export interface StreamCandidate {
   fileIdx?: number;
 }
 
-export interface IOSQualityHardeningOptions {
-  enabled?: boolean;
-  rejectTrashReleases?: boolean;
-  minBytes1080?: number;
-  minBytes720?: number;
-}
-
 export interface FileSelectionDetails {
   file: RDTorrentFile | null;
-  rejectReason?: "IOS_NO_ACCEPTABLE_QUALITY";
-  rejectDetails?: string[];
 }
 
 function sanitizeTitle(input: string): string {
@@ -71,13 +62,12 @@ export function scoreCandidate(
     season?: number;
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
-    clientProfile?: "default" | "ios_safari";
-    iosQualityHardening?: IOSQualityHardeningOptions;
   },
 ): number {
   const text = sanitizeTitle(candidate.title);
   let score = 0;
 
+  // --- Resolution tier scoring (base) ---
   if (text.includes("2160") || text.includes("4k")) score += 40;
   else if (text.includes("1080")) score += 28;
   else if (text.includes("720")) score += 18;
@@ -87,7 +77,9 @@ export function scoreCandidate(
   if (isWebSource) score += 8;
   if (isPremiumSource) score += 10;
 
-  // Audio compatibility logic: Browsers cannot play DDP5.1 / EAC3 / DTS / TrueHD
+  // --- Audio compatibility ---
+  // Browsers cannot play DDP5.1 / EAC3 / DTS / TrueHD natively.
+  // MediaFlow proxy CAN transcode these, so only penalize lightly.
   if (
     text.includes("ddp") ||
     text.includes("eac3") ||
@@ -96,42 +88,18 @@ export function scoreCandidate(
     text.includes("atmos") ||
     text.includes("flac")
   ) {
-    score -= 1000;
+    score -= 50;
   }
-  if (text.includes("aac") || text.includes("ac3") || text.includes("2 0") || text.includes("mp4")) {
-    score += 500;
+  if (text.includes("aac") || text.includes("ac3") || text.includes("2 0")) {
+    score += 60;
   }
 
-  // Browser compatibility preference (web player first, Stremio-like reliability in browser context)
+  // --- Codec compatibility ---
   if (text.includes("x264") || text.includes("h264") || text.includes("avc")) score += 26;
-  if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 85;
+  if (text.includes("x265") || text.includes("h265") || text.includes("hevc")) score -= 15;
   if (text.includes("hdr") || text.includes("dv") || text.includes("dolby vision")) score -= 22;
 
-  const hardeningEnabled = opts.iosQualityHardening?.enabled === true;
-
-  // iOS Safari profile: effectively filter out non-MP4 containers
-  // iOS cannot play MKV, WebM, or AVI — only MP4/M4V/MOV containers work
-  if (opts.clientProfile === "ios_safari") {
-    const isMp4 = /\bmp4\b|\bm4v\b|\bmov\b/i.test(candidate.title);
-    const isMkv = /\bmkv\b|\bmatroska\b/i.test(candidate.title);
-    const isWebm = /\bwebm\b/i.test(candidate.title);
-    const isAvi = /\bavi\b/i.test(candidate.title);
-    if (isMp4) score += 200;
-    if (isMkv || isWebm || isAvi) score -= 5000; // effectively filter out
-
-    if (hardeningEnabled) {
-      if (opts.iosQualityHardening?.rejectTrashReleases !== false && hasTrashReleaseTag(text)) {
-        score -= 10000;
-      }
-
-      // On iOS, promote known better source tags and penalize unknown source labels a bit.
-      if (isPremiumSource) score += 20;
-      else if (isWebSource) score += 10;
-      else score -= 20;
-    }
-  }
-
-  // Penalize bad sources generally
+  // --- Penalize bad sources generally ---
   if (
     text.includes("cam") ||
     text.includes("hdcam") ||
@@ -140,6 +108,10 @@ export function scoreCandidate(
   )
     score -= 120;
 
+  // --- Quality preference: DOMINANT factor ---
+  // When the user explicitly picks a quality, this MUST override everything else.
+  // The +2000/-2000 swing ensures the preferred resolution always wins over
+  // audio/codec bonuses which max out around ~100 total.
   if (opts.preferredQuality && opts.preferredQuality !== "auto") {
     const q = opts.preferredQuality;
     const has2160 = /\b2160p?\b|\b4k\b/i.test(candidate.title);
@@ -153,8 +125,8 @@ export function scoreCandidate(
       (q === "720" && has720) ||
       (q === "480" && has480);
 
-    if (matchesPreferred) score += 120;
-    else score -= 45;
+    if (matchesPreferred) score += 2000;
+    else score -= 2000;
   }
 
   if (opts.type === "tv") {
@@ -177,8 +149,6 @@ export function rankCandidates(
     season?: number;
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
-    clientProfile?: "default" | "ios_safari";
-    iosQualityHardening?: IOSQualityHardeningOptions;
   },
 ): Array<StreamCandidate & { score: number }> {
   const dedup = new Map<string, StreamCandidate>();
@@ -213,13 +183,11 @@ function pickFromPool(
 
   const containerRank = (path: string) => {
     const p = (path || "").toLowerCase();
-    if (p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov")) return 10;
-    if (opts.clientProfile === "ios_safari") {
-      // On iOS, anything non-MP4 is essentially unplayable
-      return -1;
-    }
+    // MKV is now fully supported via MediaFlow proxy for iOS.
+    // Rank purely by quality potential: MKV > MP4 > others.
+    if (p.endsWith(".mkv")) return 10;
+    if (p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov")) return 8;
     if (p.endsWith(".webm") || p.endsWith(".ts")) return 2;
-    if (p.endsWith(".mkv")) return 1;
     return 0;
   };
 
@@ -274,70 +242,16 @@ export function chooseTargetFileDetailed(
     season?: number;
     episode?: number;
     preferredFileIdx?: number;
-    clientProfile?: "default" | "ios_safari";
-    iosQualityHardening?: IOSQualityHardeningOptions;
   },
 ): FileSelectionDetails {
   if (!files?.length) return { file: null };
 
   let videoFiles = files.filter((f) => isLikelyVideoFile(f.path));
 
-  // iOS Safari: filter to MP4/M4V/MOV only — iOS cannot play MKV/WebM/AVI
-  let iosCompatible: RDTorrentFile[] = [];
-  if (opts.clientProfile === "ios_safari") {
-    iosCompatible = videoFiles.filter((f) => {
-      const p = (f.path || "").toLowerCase();
-      return p.endsWith(".mp4") || p.endsWith(".m4v") || p.endsWith(".mov");
-    });
-    if (iosCompatible.length > 0) {
-      videoFiles = iosCompatible;
-    }
-    // If no MP4 files exist, fall through to all video files — the player
-    // will show an error but at least we tried
-  }
+  // iOS streaming is now handled by the MediaFlow proxy which converts
+  // MKV/WebM to HLS on-the-fly. No container filtering needed.
 
   let pool = videoFiles.length ? videoFiles : files;
-
-  const hardening = opts.iosQualityHardening;
-  const hardeningEnabled = opts.clientProfile === "ios_safari" && hardening?.enabled === true;
-
-  if (hardeningEnabled && pool.length > 0) {
-    const minBytes1080 = Math.max(1, hardening?.minBytes1080 ?? 1_500_000_000);
-    const minBytes720 = Math.max(1, hardening?.minBytes720 ?? 800_000_000);
-    const rejectTrash = hardening?.rejectTrashReleases !== false;
-
-    const rejectDetails: string[] = [];
-    const accepted = pool.filter((f) => {
-      const text = sanitizeTitle(f.path || "");
-
-      if (rejectTrash && hasTrashReleaseTag(text)) {
-        rejectDetails.push(`trash_tag:${f.path}`);
-        return false;
-      }
-
-      const quality = parseQualityTag(text);
-      if (quality === "1080" && f.bytes < minBytes1080) {
-        rejectDetails.push(`below_1080_floor:${f.path}:${f.bytes}`);
-        return false;
-      }
-      if (quality === "720" && f.bytes < minBytes720) {
-        rejectDetails.push(`below_720_floor:${f.path}:${f.bytes}`);
-        return false;
-      }
-
-      return true;
-    });
-
-    if (accepted.length > 0) {
-      pool = accepted;
-    } else if (iosCompatible.length > 0) {
-      return {
-        file: null,
-        rejectReason: "IOS_NO_ACCEPTABLE_QUALITY",
-        rejectDetails,
-      };
-    }
-  }
 
   return { file: pickFromPool(pool, opts) };
 }
@@ -349,8 +263,6 @@ export function chooseTargetFile(
     season?: number;
     episode?: number;
     preferredFileIdx?: number;
-    clientProfile?: "default" | "ios_safari";
-    iosQualityHardening?: IOSQualityHardeningOptions;
   },
 ): RDTorrentFile | null {
   return chooseTargetFileDetailed(files, opts).file;

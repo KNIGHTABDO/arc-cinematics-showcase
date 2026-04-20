@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   chooseTargetFileDetailed,
   rankCandidates,
-  type IOSQualityHardeningOptions,
   type RDTorrentFile,
   type StreamCandidate,
 } from "./stream-resolver-utils";
@@ -16,11 +15,6 @@ const RESOLVER_MAX_CANDIDATES = 5;
 const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
 const RESOLVER_POLL_DELAY_MS = 1800;
 const PREFLIGHT_TIMEOUT_MS = 3500;
-
-const IOS_QUALITY_HARDENING_ENABLED = (import.meta.env.VITE_IOS_QUALITY_HARDENING_ENABLED ?? "false") === "true";
-const IOS_QUALITY_HARDENING_REJECT_TRASH = (import.meta.env.VITE_IOS_QUALITY_HARDENING_REJECT_TRASH ?? "true") !== "false";
-const IOS_QUALITY_MIN_BYTES_1080 = Number.parseInt(import.meta.env.VITE_IOS_QUALITY_MIN_BYTES_1080 ?? "1500000000", 10);
-const IOS_QUALITY_MIN_BYTES_720 = Number.parseInt(import.meta.env.VITE_IOS_QUALITY_MIN_BYTES_720 ?? "800000000", 10);
 
 type MediaType = "movie" | "tv";
 
@@ -36,7 +30,6 @@ type ResolveErrorCode =
   | "RD_STATUS_FAIL"
   | "STREAM_PREFLIGHT_FAIL"
   | "ALL_CANDIDATES_FAILED"
-  | "IOS_NO_ACCEPTABLE_QUALITY"
   | "UNKNOWN";
 
 export interface ResolverAttempt {
@@ -91,17 +84,7 @@ interface RDUnrestrictResponse {
   download?: string;
 }
 
-function getIOSQualityHardeningConfig(clientProfile?: "default" | "ios_safari"): IOSQualityHardeningOptions | undefined {
-  if (clientProfile !== "ios_safari") return undefined;
-  if (!IOS_QUALITY_HARDENING_ENABLED) return undefined;
 
-  return {
-    enabled: true,
-    rejectTrashReleases: IOS_QUALITY_HARDENING_REJECT_TRASH,
-    minBytes1080: Number.isFinite(IOS_QUALITY_MIN_BYTES_1080) ? IOS_QUALITY_MIN_BYTES_1080 : 1_500_000_000,
-    minBytes720: Number.isFinite(IOS_QUALITY_MIN_BYTES_720) ? IOS_QUALITY_MIN_BYTES_720 : 800_000_000,
-  };
-}
 
 function parseWatchId(id: string): {
   type: MediaType;
@@ -359,8 +342,6 @@ async function resolveCandidate(
     type: MediaType;
     season?: number;
     episode?: number;
-    clientProfile?: "default" | "ios_safari";
-    iosQualityHardening?: IOSQualityHardeningOptions;
   },
   diagnostics: ResolverDiagnostics,
 ): Promise<{
@@ -413,22 +394,8 @@ async function resolveCandidate(
           season: media.season,
           episode: media.episode,
           preferredFileIdx: candidate.fileIdx,
-          clientProfile: media.clientProfile,
-          iosQualityHardening: media.iosQualityHardening,
         });
         selectedFile = selection.file;
-
-        if (selection.rejectDetails?.length) {
-          attempt.rejectReasons = selection.rejectDetails;
-        }
-
-        if (selection.rejectReason === "IOS_NO_ACCEPTABLE_QUALITY") {
-          attempt.errorCode = "IOS_NO_ACCEPTABLE_QUALITY";
-          attempt.error = "iOS quality hardening rejected all iOS-compatible files for this candidate";
-          attempt.endedAt = new Date().toISOString();
-          await deleteTorrentBestEffort(torrentId);
-          return null;
-        }
 
         if (selectedFile) {
           attempt.selectedFile = {
@@ -587,8 +554,15 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const watchId = data.watchId;
     const preferredQuality = data.preferredQuality ?? "auto";
-    const clientProfile = data.clientProfile ?? "default";
-    const iosQualityHardening = getIOSQualityHardeningConfig(clientProfile);
+    const actualClientProfile = data.clientProfile ?? "default";
+    
+    // Check for MediaFlow configuration
+    const PROXY_URL = import.meta.env.VITE_MEDIAFLOW_PROXY_URL as string | undefined;
+    const PROXY_PASS = import.meta.env.VITE_MEDIAFLOW_PROXY_PASSWORD as string | undefined;
+    const hasProxy = Boolean(PROXY_URL && PROXY_PASS);
+
+    // If proxy is enabled, iOS can handle raw MKV files. We bypass the restrictive iOS filters.
+    const clientProfile = (hasProxy && actualClientProfile === "ios_safari") ? "default" : actualClientProfile;
     if (!RD_TOKEN) {
       return {
         errorCode: "NO_RDTOKEN" as ResolveErrorCode,
@@ -630,8 +604,6 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         season: parsed.season,
         episode: parsed.episode,
         preferredQuality,
-        clientProfile,
-        iosQualityHardening,
       }).slice(0, RESOLVER_MAX_CANDIDATES);
 
       diagnostics.candidateCount = ranked.length;
@@ -657,7 +629,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       }
 
       for (const candidate of ranked) {
-        const resolved = await resolveCandidate(candidate, { ...parsed, clientProfile, iosQualityHardening }, diagnostics);
+        const resolved = await resolveCandidate(candidate, { ...parsed }, diagnostics);
         if (!resolved) continue;
 
         diagnostics.selected = {
@@ -674,31 +646,32 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
 
         await telemetryLog(diagnostics);
 
+        let finalStreamUrl = resolved.streamUrl;
+        let finalBackupStreams = resolved.backupStreams;
+
+        // If an iOS device and proxy is configured, wrap the RD URLs through MediaFlow
+        if (actualClientProfile === "ios_safari" && hasProxy) {
+          finalStreamUrl = `${PROXY_URL}/proxy/hls?url=${encodeURIComponent(resolved.streamUrl)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`;
+          finalBackupStreams = resolved.backupStreams.map((b) => 
+            `${PROXY_URL}/proxy/hls?url=${encodeURIComponent(b)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`
+          );
+        }
+
         return {
-          streamUrl: resolved.streamUrl,
-          backupStreams: resolved.backupStreams,
+          streamUrl: finalStreamUrl,
+          backupStreams: finalBackupStreams,
           filename: resolved.selectedFile ? resolved.selectedFile.path.split('/').pop() : "",
           imdbId,
           mediaType: parsed.type,
           season: parsed.season,
           episode: parsed.episode,
           selectedQuality: preferredQuality,
-          clientProfile,
+          clientProfile: actualClientProfile,
           diagnostics,
         };
       }
 
-      await telemetryLog(diagnostics);
 
-      const iosQualityRejected = diagnostics.attempts.length > 0 && diagnostics.attempts.every((a) => a.errorCode === "IOS_NO_ACCEPTABLE_QUALITY");
-
-      if (iosQualityRejected) {
-        return {
-          errorCode: "IOS_NO_ACCEPTABLE_QUALITY" as ResolveErrorCode,
-          error: "No acceptable iOS-compatible quality stream found. Try another title or quality setting.",
-          diagnostics,
-        };
-      }
 
       return {
         errorCode: "ALL_CANDIDATES_FAILED" as ResolveErrorCode,
