@@ -649,11 +649,13 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         let finalStreamUrl = resolved.streamUrl;
         let finalBackupStreams = resolved.backupStreams;
 
-        // If an iOS device and proxy is configured, wrap the RD URLs through MediaFlow
+        // If an iOS device and proxy is configured, wrap the RD URLs through the local /mfproxy path
+        // to bypass HTTPS mixed-content restrictions in Safari
         if (actualClientProfile === "ios_safari" && hasProxy) {
-          finalStreamUrl = `${PROXY_URL}/proxy/hls?url=${encodeURIComponent(resolved.streamUrl)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`;
+          const proxyPrefix = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/mfproxy` : '/mfproxy';
+          finalStreamUrl = `${proxyPrefix}/proxy/hls?url=${encodeURIComponent(resolved.streamUrl)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`;
           finalBackupStreams = resolved.backupStreams.map((b) => 
-            `${PROXY_URL}/proxy/hls?url=${encodeURIComponent(b)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`
+            `${proxyPrefix}/proxy/hls?url=${encodeURIComponent(b)}&api_password=${encodeURIComponent(PROXY_PASS || "")}`
           );
         }
 
