@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
   chooseTargetFileDetailed,
@@ -8,10 +9,14 @@ import {
   type StreamCandidate,
 } from "./stream-resolver-utils";
 import { logStreamResolverDiagnostics } from "./stream-telemetry";
-import { supabase } from "../supabase";
 
 const RD_TOKEN = import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+
+const serverSupabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const RESOLVER_MAX_CANDIDATES = 5;
 const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
@@ -606,7 +611,14 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       };
     }
 
-    const auth = await supabase.auth.getUser(accessToken);
+    if (!serverSupabase) {
+      return {
+        errorCode: "UNAUTHORIZED" as ResolveErrorCode,
+        error: "Supabase client is not configured on server.",
+      };
+    }
+
+    const auth = await serverSupabase.auth.getUser(accessToken);
     if (auth.error || !auth.data.user) {
       return {
         errorCode: "UNAUTHORIZED" as ResolveErrorCode,
@@ -628,7 +640,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       };
     }
 
-    const profileCheck = await supabase
+    const profileCheck = await serverSupabase
       .from("profiles")
       .select("id")
       .eq("id", profileId)
