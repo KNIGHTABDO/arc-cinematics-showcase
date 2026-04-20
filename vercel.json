@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/mfproxy/:path*",
+      "destination": "http://84.8.216.60:8080/:path*"
+    }
+  ]
+}
