@@ -82,14 +82,6 @@ function WatchPage() {
 
     const load = async () => {
       try {
-        const { data: authData } = await supabase.auth.getSession();
-        const accessToken = authData.session?.access_token;
-        if (!accessToken) {
-          setError("Please log in to watch.");
-          navigate({ to: "/login" });
-          return;
-        }
-
         const profileId = profile?.id || localStorage.getItem("arc_active_profile");
         if (!profileId) {
           setError("Please choose a profile.");
@@ -132,12 +124,7 @@ function WatchPage() {
             : "default";
 
         const res: any = await getStreamForMovie({
-          data: {
-            watchId: `${id}|p-${profileId}`,
-            preferredQuality: quality,
-            clientProfile,
-            accessToken,
-          },
+          data: { watchId: id, preferredQuality: quality, clientProfile },
         });
         if (cancelled) return;
 

@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
   chooseTargetFileDetailed,
@@ -12,11 +11,6 @@ import { logStreamResolverDiagnostics } from "./stream-telemetry";
 
 const RD_TOKEN = import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
-const serverSupabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const RESOLVER_MAX_CANDIDATES = 5;
 const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
@@ -586,7 +580,6 @@ const inputSchema = z.object({
   watchId: z.string().min(1),
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
   clientProfile: z.enum(["default", "ios_safari"]).optional(),
-  accessToken: z.string().min(20),
 });
 
 export const getStreamForMovie = createServerFn({ method: "POST" })
@@ -596,7 +589,6 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
     const preferredQuality = data.preferredQuality ?? "auto";
     const clientProfile = data.clientProfile ?? "default";
     const iosQualityHardening = getIOSQualityHardeningConfig(clientProfile);
-    const accessToken = data.accessToken.trim();
     if (!RD_TOKEN) {
       return {
         errorCode: "NO_RDTOKEN" as ResolveErrorCode,
@@ -611,52 +603,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       };
     }
 
-    if (!serverSupabase) {
-      return {
-        errorCode: "UNAUTHORIZED" as ResolveErrorCode,
-        error: "Supabase client is not configured on server.",
-      };
-    }
-
-    const auth = await serverSupabase.auth.getUser(accessToken);
-    if (auth.error || !auth.data.user) {
-      return {
-        errorCode: "UNAUTHORIZED" as ResolveErrorCode,
-        error: "Authentication required.",
-      };
-    }
-
-    const userId = auth.data.user.id;
-
-    const profileId = (() => {
-      const p = /(?:^|\|)p-([0-9a-f-]{8,})(?:\||$)/i.exec(watchId);
-      return p?.[1] || null;
-    })();
-
-    if (!profileId) {
-      return {
-        errorCode: "PROFILE_REQUIRED" as ResolveErrorCode,
-        error: "Profile context is required.",
-      };
-    }
-
-    const profileCheck = await serverSupabase
-      .from("profiles")
-      .select("id")
-      .eq("id", profileId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (profileCheck.error || !profileCheck.data) {
-      return {
-        errorCode: "PROFILE_FORBIDDEN" as ResolveErrorCode,
-        error: "Profile access denied.",
-      };
-    }
-
-    const normalizedWatchId = watchId.replace(/\|p-[0-9a-f-]{8,}/i, "");
-
-    const parsed = parseWatchId(normalizedWatchId);
+    const parsed = parseWatchId(watchId);
     const diagnostics: ResolverDiagnostics = {
       watchId,
       mediaType: parsed.type,

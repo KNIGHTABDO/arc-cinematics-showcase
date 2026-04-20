@@ -22,6 +22,8 @@
   - enforce minimum bytes floors for advertised `1080p`/`720p` files on iOS,
   - return explicit `IOS_NO_ACCEPTABLE_QUALITY` resolver error when all iOS-compatible files fail policy,
   - attach per-attempt reject reasons in resolver diagnostics for debuggability.
+- Fix regression causing false `[PROFILE_FORBIDDEN]` on watch playback by restoring prior stream resolver contract (`watchId` only, no server profile gate in resolver).
+- Keep iOS hardening logic and diagnostics improvements while preserving existing profile/session flow from pre-hardening behavior.
 - Replace direct client subtitle API calls with server subtitle pipeline for both movie and TV:
   - include `season_number` + `episode_number` for TV subtitle queries,
   - normalize subtitle URLs and convert to WebVTT server-side,
