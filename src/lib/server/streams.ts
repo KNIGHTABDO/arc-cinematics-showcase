@@ -8,6 +8,7 @@ import {
   type StreamCandidate,
 } from "./stream-resolver-utils";
 import { logStreamResolverDiagnostics } from "./stream-telemetry";
+import { supabase } from "../supabase";
 
 const RD_TOKEN = import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
