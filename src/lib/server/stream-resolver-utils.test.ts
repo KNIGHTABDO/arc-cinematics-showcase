@@ -56,6 +56,18 @@ describe("stream resolver utilities", () => {
     assert.equal(ranked[0].infoHash, "b");
   });
 
+  it("rankCandidates prefers requested/original audio language", () => {
+    const ranked = rankCandidates(
+      [
+        { infoHash: "a", magnet: "magnet:?xt=urn:btih:a", title: "Movie.1080p.HINDI.DUBBED.x264" },
+        { infoHash: "b", magnet: "magnet:?xt=urn:btih:b", title: "Movie.1080p.ENG.x264" },
+      ],
+      { type: "movie", preferredQuality: "1080", preferredAudioLanguage: "en" },
+    );
+
+    assert.equal(ranked[0].infoHash, "b");
+  });
+
   it("chooseTargetFile prefers explicit episode match for TV", () => {
     const files: RDTorrentFile[] = [
       { id: 1, path: "/Show.S01E02.mkv", bytes: 1_000_000_000 },
@@ -98,6 +110,16 @@ describe("stream resolver utilities", () => {
       preferredFileIdx: 11,
     });
     assert.equal(byIdPlusOne?.id, 11);
+  });
+
+  it("chooseTargetFile prefers file path matching requested/original audio language", () => {
+    const files: RDTorrentFile[] = [
+      { id: 1, path: "/Movie.1080p.HINDI.DUBBED.mkv", bytes: 2_200_000_000 },
+      { id: 2, path: "/Movie.1080p.ENG.mkv", bytes: 1_900_000_000 },
+    ];
+
+    const picked = chooseTargetFile(files, { type: "movie", preferredAudioLanguage: "en" });
+    assert.equal(picked?.id, 2);
   });
 
   it("chooseTargetFile prioritizes mkv over mp4 when bytes are similar to leverage the proxy", () => {

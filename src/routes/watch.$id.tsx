@@ -13,6 +13,15 @@ interface SubtitleTrack {
   label: string;
   lang: string;
   url: string;
+  syncConfidence?: number;
+  suggestedOffsetMs?: number;
+}
+
+interface AudioTrackOption {
+  index: number;
+  label: string;
+  language: string;
+  kind: string;
 }
 
 export const Route = createFileRoute("/watch/$id")({
@@ -39,6 +48,8 @@ function WatchPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const progressInterval = useRef<ReturnType<typeof setInterval>>(undefined);
+  const stallTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hasUserSelectedAudioTrack = useRef(false);
 
   const parsed = parseWatchId(id);
 
@@ -65,9 +76,13 @@ function WatchPage() {
   const [activeSubVttUrl, setActiveSubVttUrl] = useState<string | null>(null);
   const [showSubMenu, setShowSubMenu] = useState(false);
   const [showSubSettings, setShowSubSettings] = useState(false);
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [offsetMs, setOffsetMs] = useState(0);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
+  const [activeAudioTrackIdx, setActiveAudioTrackIdx] = useState<number | null>(null);
+  const [originalAudioLanguage, setOriginalAudioLanguage] = useState<string>("");
   const [hoverPosition, setHoverPosition] = useState<number | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -89,6 +104,8 @@ function WatchPage() {
           return;
         }
 
+        let preferredAudioLanguage = "";
+
         if (parsed.type === "tv") {
           const show: any = await getTVDetails({ data: parsed.tmdbId });
           if (cancelled) return;
@@ -98,6 +115,8 @@ function WatchPage() {
           if (show?.backdrop_path) {
             setBackdrop(`https://image.tmdb.org/t/p/w780${show.backdrop_path}`);
           }
+
+          preferredAudioLanguage = String(show?.original_language || "").toLowerCase();
 
           if (isKids && !isTVAllowedForKids(show)) {
             setError("This content is not available on kids profiles.");
@@ -112,11 +131,15 @@ function WatchPage() {
             setBackdrop(`https://image.tmdb.org/t/p/w780${movie.backdrop_path}`);
           }
 
+          preferredAudioLanguage = String(movie?.original_language || "").toLowerCase();
+
           if (isKids && !isMovieAllowedForKids(movie)) {
             setError("This content is not available on kids profiles.");
             return;
           }
         }
+
+        setOriginalAudioLanguage(preferredAudioLanguage.slice(0, 2));
 
         const clientProfile =
           typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -124,7 +147,12 @@ function WatchPage() {
             : "default";
 
         const res: any = await getStreamForMovie({
-          data: { watchId: id, preferredQuality: quality, clientProfile },
+          data: {
+            watchId: id,
+            preferredQuality: quality,
+            clientProfile,
+            preferredAudioLanguage: preferredAudioLanguage.slice(0, 2) || undefined,
+          },
         });
         if (cancelled) return;
 
@@ -144,6 +172,9 @@ function WatchPage() {
           setBackupStreams(Array.isArray(res.backupStreams) ? res.backupStreams : []);
           setCurrentStreamIndex(0);
           setStreamReady(false);
+          setAudioTracks([]);
+          setActiveAudioTrackIdx(null);
+          hasUserSelectedAudioTrack.current = false;
           setError(null);
           return;
         }
@@ -185,6 +216,9 @@ function WatchPage() {
             episode: parsed.episode,
             language: profile?.subtitle_language || undefined,
             releaseName: streamFilename,
+            title: details?.title || details?.name || undefined,
+            originalTitle: details?.original_title || details?.original_name || undefined,
+            originalLanguage: details?.original_language || undefined,
           },
         });
 
@@ -196,11 +230,13 @@ function WatchPage() {
                 label: String(s?.label || "Unknown"),
                 lang: String(s?.lang || ""),
                 url: String(s?.url || ""),
+                syncConfidence:
+                  typeof s?.syncConfidence === "number" ? s.syncConfidence : undefined,
+                suggestedOffsetMs:
+                  typeof s?.suggestedOffsetMs === "number" ? s.suggestedOffsetMs : undefined,
               }))
               .filter((s: SubtitleTrack) => s.url)
           : [];
-
-        setSubtitles(tracks);
 
         setSubtitles(tracks);
 
@@ -214,8 +250,14 @@ function WatchPage() {
         const autoIdx = typeof result?.autoSelectIndex === "number" ? result.autoSelectIndex : 0;
         if (autoIdx >= 0 && autoIdx < tracks.length) {
           setActiveSub(tracks[autoIdx].url);
+          if (typeof tracks[autoIdx].suggestedOffsetMs === "number") {
+            setOffsetMs(tracks[autoIdx].suggestedOffsetMs);
+          }
         } else {
           setActiveSub(tracks[0].url);
+          if (typeof tracks[0].suggestedOffsetMs === "number") {
+            setOffsetMs(tracks[0].suggestedOffsetMs);
+          }
         }
       } catch (e) {
         console.warn("[ARC] Subtitle fetch failed:", e);
@@ -265,6 +307,76 @@ function WatchPage() {
     };
   }, [activeSub, offsetMs]);
 
+  const switchToNextStream = useCallback(() => {
+    const next = backupStreams[currentStreamIndex];
+    if (!next) return false;
+
+    setCurrentStreamIndex((idx) => idx + 1);
+    setStreamReady(false);
+    setBuffering(true);
+    setStreamUrl(next);
+    setAudioTracks([]);
+    setActiveAudioTrackIdx(null);
+    hasUserSelectedAudioTrack.current = false;
+    return true;
+  }, [backupStreams, currentStreamIndex]);
+
+  const refreshAudioTracks = useCallback(() => {
+    const v = videoRef.current as (HTMLVideoElement & { audioTracks?: any }) | null;
+    const list = v?.audioTracks;
+
+    if (!list || typeof list.length !== "number") {
+      setAudioTracks([]);
+      setActiveAudioTrackIdx(null);
+      return;
+    }
+
+    const tracks: Array<{ enabled?: boolean; language?: string; label?: string; kind?: string }> = [];
+    for (let i = 0; i < list.length; i++) {
+      tracks.push(list[i]);
+    }
+
+    const options: AudioTrackOption[] = tracks.map((track, index) => ({
+      index,
+      label: track?.label || `Track ${index + 1}`,
+      language: (track?.language || "").toLowerCase(),
+      kind: track?.kind || "main",
+    }));
+
+    setAudioTracks(options);
+
+    let activeIdx = tracks.findIndex((track) => Boolean(track?.enabled));
+    if (activeIdx < 0 && options.length > 0) activeIdx = 0;
+
+    const targetLang = originalAudioLanguage.toLowerCase().slice(0, 2);
+    if (!hasUserSelectedAudioTrack.current && targetLang && options.length > 1) {
+      const preferredIdx = options.findIndex((track) => track.language.startsWith(targetLang));
+      if (preferredIdx >= 0) {
+        for (let i = 0; i < tracks.length; i++) {
+          tracks[i].enabled = i === preferredIdx;
+        }
+        activeIdx = preferredIdx;
+      }
+    }
+
+    setActiveAudioTrackIdx(activeIdx >= 0 ? activeIdx : null);
+  }, [originalAudioLanguage]);
+
+  const setNativeAudioTrack = useCallback((index: number) => {
+    const v = videoRef.current as (HTMLVideoElement & { audioTracks?: any }) | null;
+    const list = v?.audioTracks;
+
+    if (!list || typeof list.length !== "number") return;
+    if (index < 0 || index >= list.length) return;
+
+    for (let i = 0; i < list.length; i++) {
+      list[i].enabled = i === index;
+    }
+
+    hasUserSelectedAudioTrack.current = true;
+    setActiveAudioTrackIdx(index);
+  }, []);
+
   // Keyboard shortcuts for subtitle sync
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -285,6 +397,76 @@ function WatchPage() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Persist subtitle offset per title + subtitle URL for faster future replays.
+  useEffect(() => {
+    if (!activeSub || typeof window === "undefined") return;
+
+    const key = `arc_sub_offset:${id}:${activeSub}`;
+    const stored = window.localStorage.getItem(key);
+    if (stored == null) {
+      setOffsetMs(0);
+      return;
+    }
+
+    const parsed = Number(stored);
+    if (Number.isFinite(parsed)) {
+      setOffsetMs(parsed);
+    } else {
+      setOffsetMs(0);
+    }
+  }, [id, activeSub]);
+
+  useEffect(() => {
+    if (!activeSub || typeof window === "undefined") return;
+    const key = `arc_sub_offset:${id}:${activeSub}`;
+    window.localStorage.setItem(key, String(offsetMs));
+  }, [id, activeSub, offsetMs]);
+
+  // Refresh available audio tracks when stream metadata changes.
+  useEffect(() => {
+    refreshAudioTracks();
+
+    const v = videoRef.current as (HTMLVideoElement & { audioTracks?: any }) | null;
+    const list = v?.audioTracks;
+    if (!list || typeof list.addEventListener !== "function") return;
+
+    const update = () => refreshAudioTracks();
+    list.addEventListener("addtrack", update);
+    list.addEventListener("removetrack", update);
+    list.addEventListener("change", update);
+
+    return () => {
+      list.removeEventListener("addtrack", update);
+      list.removeEventListener("removetrack", update);
+      list.removeEventListener("change", update);
+    };
+  }, [streamUrl, refreshAudioTracks]);
+
+  // Avoid infinite spinner by failing over if stream does not start within a deadline.
+  useEffect(() => {
+    if (!streamUrl) return;
+
+    if (stallTimeout.current) clearTimeout(stallTimeout.current);
+
+    stallTimeout.current = setTimeout(() => {
+      const v = videoRef.current;
+      if (!v || streamReady) return;
+
+      const bufferedEnd = v.buffered?.length ? v.buffered.end(v.buffered.length - 1) : 0;
+      const hasStarted = v.currentTime > 0.25 || bufferedEnd > 1;
+      if (hasStarted) return;
+
+      const switched = switchToNextStream();
+      if (!switched) {
+        setError("Stream startup timed out. Please try another quality or title.");
+      }
+    }, 18000);
+
+    return () => {
+      if (stallTimeout.current) clearTimeout(stallTimeout.current);
+    };
+  }, [streamUrl, streamReady, switchToNextStream]);
 
   useEffect(() => {
     const profileId = localStorage.getItem("arc_active_profile");
@@ -588,7 +770,10 @@ function WatchPage() {
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
-        onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+        onLoadedMetadata={() => {
+          setDuration(videoRef.current?.duration || 0);
+          refreshAudioTracks();
+        }}
         onCanPlay={() => setStreamReady(true)}
         onWaiting={() => setBuffering(true)}
         onPlaying={() => {
@@ -605,12 +790,7 @@ function WatchPage() {
           const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
           // Try backup streams first
-          const next = backupStreams[currentStreamIndex];
-          if (next) {
-            setCurrentStreamIndex((idx) => idx + 1);
-            setStreamReady(false);
-            setBuffering(true);
-            setStreamUrl(next);
+          if (switchToNextStream()) {
             return;
           }
 
@@ -972,6 +1152,56 @@ function WatchPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">
+            {/* Audio tracks */}
+            <div className="relative">
+              <button
+                onClick={() => setShowAudioMenu((v) => !v)}
+                className="text-white/70 hover:text-white transition p-2 -m-2 active:scale-90"
+                title="Audio tracks"
+              >
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                  <path d="M19 9a5 5 0 0 1 0 6" />
+                  <path d="M16 6a9 9 0 0 1 0 12" />
+                </svg>
+              </button>
+
+              {showAudioMenu && (
+                <div className="absolute bottom-full right-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[220px] backdrop-blur-xl">
+                  {audioTracks.length > 1 ? (
+                    audioTracks.map((track) => {
+                      const isActive = activeAudioTrackIdx === track.index;
+                      return (
+                        <button
+                          key={`${track.index}-${track.language}-${track.label}`}
+                          onClick={() => {
+                            setNativeAudioTrack(track.index);
+                            setShowAudioMenu(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${isActive ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
+                        >
+                          {track.label}
+                          {track.language ? ` (${track.language.toUpperCase()})` : ""}
+                          {track.kind && track.kind !== "main" ? ` · ${track.kind}` : ""}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-3 py-2 text-sm text-white/60">
+                      Single/default audio track
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Subtitles */}
             <div className="relative">
               <button
@@ -1071,7 +1301,13 @@ function WatchPage() {
                 return (
                   <button
                     key={i}
-                    onClick={() => { setActiveSub(sub.url); setShowSubMenu(false); }}
+                    onClick={() => {
+                      setActiveSub(sub.url);
+                      if (typeof sub.suggestedOffsetMs === "number") {
+                        setOffsetMs(sub.suggestedOffsetMs);
+                      }
+                      setShowSubMenu(false);
+                    }}
                     className={`w-full text-left px-3 py-3 text-sm rounded-xl transition truncate mb-1 ${isActive ? "text-arc-accent flex items-center gap-2 bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
                   >
                     {isActive && <span className="w-1.5 h-1.5 rounded-full bg-arc-accent shrink-0"></span>}

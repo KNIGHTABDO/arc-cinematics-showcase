@@ -132,6 +132,15 @@ function parseWatchId(id: string): {
   return { type: "movie", tmdbId: id };
 }
 
+function normalizePreferredAudioLanguage(input?: string): string | undefined {
+  const raw = (input || "").toLowerCase().trim();
+  if (!raw) return undefined;
+
+  const code = raw.split(/[-_]/)[0];
+  if (!/^[a-z]{2,3}$/.test(code)) return undefined;
+  return code;
+}
+
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -370,6 +379,7 @@ async function resolveCandidate(
     type: MediaType;
     season?: number;
     episode?: number;
+    preferredAudioLanguage?: string;
   },
   diagnostics: ResolverDiagnostics,
 ): Promise<{
@@ -422,6 +432,7 @@ async function resolveCandidate(
           season: media.season,
           episode: media.episode,
           preferredFileIdx: candidate.fileIdx,
+          preferredAudioLanguage: media.preferredAudioLanguage,
         });
         selectedFile = selection.file;
 
@@ -575,6 +586,7 @@ const inputSchema = z.object({
   watchId: z.string().min(1),
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
   clientProfile: z.enum(["default", "ios_safari"]).optional(),
+  preferredAudioLanguage: z.string().optional(),
 });
 
 export const getStreamForMovie = createServerFn({ method: "POST" })
@@ -583,6 +595,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
     const watchId = data.watchId;
     const preferredQuality = data.preferredQuality ?? "auto";
     const actualClientProfile = data.clientProfile ?? "default";
+    const preferredAudioLanguage = normalizePreferredAudioLanguage(data.preferredAudioLanguage);
 
     const PROXY_PASS = import.meta.env.VITE_MEDIAFLOW_PROXY_PASSWORD as string | undefined;
     const shouldUseIOSProxy = actualClientProfile === "ios_safari";
@@ -630,6 +643,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         season: parsed.season,
         episode: parsed.episode,
         preferredQuality,
+        preferredAudioLanguage,
       }).slice(0, RESOLVER_MAX_CANDIDATES);
 
       diagnostics.candidateCount = ranked.length;
@@ -655,7 +669,11 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       }
 
       for (const candidate of ranked) {
-        const resolved = await resolveCandidate(candidate, { ...parsed }, diagnostics);
+        const resolved = await resolveCandidate(
+          candidate,
+          { ...parsed, preferredAudioLanguage },
+          diagnostics,
+        );
         if (!resolved) continue;
 
         diagnostics.selected = {

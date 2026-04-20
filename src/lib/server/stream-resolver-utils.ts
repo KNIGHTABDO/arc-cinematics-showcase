@@ -23,6 +23,92 @@ function sanitizeTitle(input: string): string {
     .trim();
 }
 
+const AUDIO_LANGUAGE_ALIASES: Record<string, string[]> = {
+  ar: ["ar", "ara", "arabic", "arab"],
+  de: ["de", "deu", "ger", "german", "deutsch"],
+  en: ["en", "eng", "english", "original"],
+  es: ["es", "spa", "spanish", "espanol", "castilian", "latino"],
+  fr: ["fr", "fra", "fre", "french", "francais"],
+  hi: ["hi", "hin", "hindi"],
+  it: ["it", "ita", "italian", "italiano"],
+  ja: ["ja", "jpn", "japanese"],
+  ko: ["ko", "kor", "korean"],
+  pt: ["pt", "por", "portuguese", "brazilian", "br"],
+  ru: ["ru", "rus", "russian"],
+  tr: ["tr", "tur", "turkish"],
+  zh: ["zh", "chi", "zho", "chinese", "mandarin", "cantonese"],
+};
+
+const DUBBED_MARKERS = [
+  "dubbed",
+  "dual audio",
+  "multi audio",
+  "multi-audio",
+  "audio latino",
+  "vfq",
+  "vostfr",
+];
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeLanguageCode(language?: string): string | null {
+  const raw = (language || "").toLowerCase().trim();
+  if (!raw) return null;
+
+  if (raw.length === 2 && AUDIO_LANGUAGE_ALIASES[raw]) {
+    return raw;
+  }
+
+  for (const [code, aliases] of Object.entries(AUDIO_LANGUAGE_ALIASES)) {
+    if (aliases.includes(raw)) {
+      return code;
+    }
+  }
+
+  return raw.slice(0, 2) || null;
+}
+
+function textContainsLanguage(text: string, languageCode: string): boolean {
+  const normalized = (text || "").toLowerCase();
+  const aliases = AUDIO_LANGUAGE_ALIASES[languageCode] || [languageCode];
+
+  return aliases.some((alias) => {
+    const escaped = escapeRegExp(alias.toLowerCase());
+    const rx = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i");
+    return rx.test(normalized);
+  });
+}
+
+function scoreAudioLanguageMatch(text: string, preferredAudioLanguage?: string): number {
+  const preferred = normalizeLanguageCode(preferredAudioLanguage);
+  if (!preferred) return 0;
+
+  const normalized = (text || "").toLowerCase();
+  const hasPreferred = textContainsLanguage(normalized, preferred);
+  const hasDubbedMarker = DUBBED_MARKERS.some((marker) => normalized.includes(marker));
+
+  let hasOtherExplicitLanguage = false;
+  for (const code of Object.keys(AUDIO_LANGUAGE_ALIASES)) {
+    if (code === preferred) continue;
+    if (textContainsLanguage(normalized, code)) {
+      hasOtherExplicitLanguage = true;
+      break;
+    }
+  }
+
+  let score = 0;
+
+  if (hasPreferred) score += 260;
+  if (hasPreferred && hasDubbedMarker) score += 70;
+
+  if (!hasPreferred && hasOtherExplicitLanguage) score -= 260;
+  if (!hasPreferred && hasDubbedMarker) score -= 120;
+
+  return score;
+}
+
 function hasTrashReleaseTag(text: string): boolean {
   return /\b(hdcam|camrip|cam|hdts|telesync|ts|workprint)\b/i.test(text);
 }
@@ -62,6 +148,7 @@ export function scoreCandidate(
     season?: number;
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
+    preferredAudioLanguage?: string;
   },
 ): number {
   const text = sanitizeTitle(candidate.title);
@@ -108,6 +195,9 @@ export function scoreCandidate(
   )
     score -= 120;
 
+  // Keep original/requested language as a first-class selector signal.
+  score += scoreAudioLanguageMatch(candidate.title, opts.preferredAudioLanguage);
+
   // --- Quality preference: DOMINANT factor ---
   // When the user explicitly picks a quality, this MUST override everything else.
   // The +2000/-2000 swing ensures the preferred resolution always wins over
@@ -149,6 +239,7 @@ export function rankCandidates(
     season?: number;
     episode?: number;
     preferredQuality?: "auto" | "2160" | "1080" | "720" | "480";
+    preferredAudioLanguage?: string;
   },
 ): Array<StreamCandidate & { score: number }> {
   const dedup = new Map<string, StreamCandidate>();
@@ -164,7 +255,14 @@ export function rankCandidates(
 
 function pickFromPool(
   pool: RDTorrentFile[],
-  opts: { type: "movie" | "tv"; season?: number; episode?: number; preferredFileIdx?: number; clientProfile?: "default" | "ios_safari" },
+  opts: {
+    type: "movie" | "tv";
+    season?: number;
+    episode?: number;
+    preferredFileIdx?: number;
+    clientProfile?: "default" | "ios_safari";
+    preferredAudioLanguage?: string;
+  },
 ): RDTorrentFile | null {
   if (!pool.length) return null;
 
@@ -191,12 +289,18 @@ function pickFromPool(
     return 0;
   };
 
+  const languageRank = (path: string) =>
+    scoreAudioLanguageMatch(path, opts.preferredAudioLanguage);
+
   if (opts.type === "tv") {
     const matchers = buildEpisodeMatchers(opts.season, opts.episode);
     const byEpisode = pool.filter((f) => matchers.some((rx) => rx.test(f.path)));
     if (byEpisode.length) {
       return (
         byEpisode.sort((a, b) => {
+          const langDelta = languageRank(b.path) - languageRank(a.path);
+          if (langDelta !== 0) return langDelta;
+
           const rankDelta = containerRank(b.path) - containerRank(a.path);
           if (rankDelta !== 0) return rankDelta;
           return b.bytes - a.bytes;
@@ -218,6 +322,9 @@ function pickFromPool(
     if (filtered.length) {
       return (
         filtered.sort((a, b) => {
+          const langDelta = languageRank(b.path) - languageRank(a.path);
+          if (langDelta !== 0) return langDelta;
+
           const rankDelta = containerRank(b.path) - containerRank(a.path);
           if (rankDelta !== 0) return rankDelta;
           return b.bytes - a.bytes;
@@ -228,6 +335,9 @@ function pickFromPool(
 
   return (
     pool.sort((a, b) => {
+      const langDelta = languageRank(b.path) - languageRank(a.path);
+      if (langDelta !== 0) return langDelta;
+
       const rankDelta = containerRank(b.path) - containerRank(a.path);
       if (rankDelta !== 0) return rankDelta;
       return b.bytes - a.bytes;
@@ -242,6 +352,7 @@ export function chooseTargetFileDetailed(
     season?: number;
     episode?: number;
     preferredFileIdx?: number;
+    preferredAudioLanguage?: string;
   },
 ): FileSelectionDetails {
   if (!files?.length) return { file: null };
@@ -263,6 +374,7 @@ export function chooseTargetFile(
     season?: number;
     episode?: number;
     preferredFileIdx?: number;
+    preferredAudioLanguage?: string;
   },
 ): RDTorrentFile | null {
   return chooseTargetFileDetailed(files, opts).file;

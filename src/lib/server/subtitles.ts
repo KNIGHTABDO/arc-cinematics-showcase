@@ -10,6 +10,9 @@ const subtitlesSearchInput = z.object({
   episode: z.number().int().positive().optional(),
   language: z.string().optional(),
   releaseName: z.string().optional(),
+  title: z.string().optional(),
+  originalTitle: z.string().optional(),
+  originalLanguage: z.string().optional(),
 });
 
 const SUBDL_API_KEY = typeof process !== "undefined" ? process.env.VITE_SUBDL_API_KEY || import.meta.env.VITE_SUBDL_API_KEY : import.meta.env.VITE_SUBDL_API_KEY;
@@ -18,6 +21,158 @@ const subtitleVttInput = z.object({
   url: z.string().url(),
   offsetMs: z.number().int().default(0),
 });
+
+const RELEASE_STOP_TOKENS = new Set([
+  "the",
+  "and",
+  "of",
+  "proper",
+  "repack",
+  "readnfo",
+  "internal",
+  "dubbed",
+  "dual",
+  "multi",
+  "audio",
+  "sub",
+  "subs",
+]);
+
+function normalizeReleaseLabel(input: string): string {
+  return (input || "")
+    .toLowerCase()
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\([^\)]*\)/g, " ")
+    .replace(/[^a-z0-9.\-\s_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeRelease(input: string): string[] {
+  const normalized = normalizeReleaseLabel(input);
+  if (!normalized) return [];
+
+  return normalized
+    .split(/[.\-_\s]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !RELEASE_STOP_TOKENS.has(token));
+}
+
+function tokenOverlapScore(reference: string[], candidate: string[]): number {
+  if (!reference.length || !candidate.length) return 0;
+
+  const refSet = new Set(reference);
+  const candSet = new Set(candidate);
+  let overlap = 0;
+  for (const token of refSet) {
+    if (candSet.has(token)) overlap++;
+  }
+
+  return overlap / refSet.size;
+}
+
+function parseFpsToken(input: string): number | null {
+  const normalized = normalizeReleaseLabel(input);
+  const withFps = normalized.match(/(\d{2}(?:\.\d{2,3})?)\s*fps\b/i);
+  if (withFps?.[1]) {
+    const fps = Number(withFps[1]);
+    return Number.isFinite(fps) ? fps : null;
+  }
+
+  const raw = normalized.match(/\b(23\.976|24(?:\.0+)?|25(?:\.0+)?|29\.97|30(?:\.0+)?)\b/);
+  if (raw?.[1]) {
+    const fps = Number(raw[1]);
+    return Number.isFinite(fps) ? fps : null;
+  }
+
+  return null;
+}
+
+function parseTimeStampToMs(stamp: string): number {
+  const parts = stamp.trim().replace(",", ".").split(":");
+  if (parts.length !== 3) return 0;
+
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  const secParts = parts[2].split(".");
+  const seconds = Number(secParts[0] || 0);
+  const millis = Number((secParts[1] || "0").padEnd(3, "0").slice(0, 3));
+
+  if (![hours, minutes, seconds, millis].every((n) => Number.isFinite(n))) {
+    return 0;
+  }
+
+  return hours * 3600000 + minutes * 60000 + seconds * 1000 + millis;
+}
+
+function extractSubtitleTimingStats(text: string):
+  | { cueCount: number; firstCueMs: number; lastCueMs: number }
+  | null {
+  const lines = text.replace(/\r\n|\r/g, "\n").split("\n");
+  const timeRx = /(\d{2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{1,3})/;
+
+  let cueCount = 0;
+  let firstCueMs = Number.POSITIVE_INFINITY;
+  let lastCueMs = 0;
+
+  for (const line of lines) {
+    const match = line.match(timeRx);
+    if (!match) continue;
+
+    const startMs = parseTimeStampToMs(match[1]);
+    const endMs = parseTimeStampToMs(match[2]);
+
+    cueCount++;
+    if (startMs < firstCueMs) firstCueMs = startMs;
+    if (endMs > lastCueMs) lastCueMs = endMs;
+  }
+
+  if (!cueCount || !Number.isFinite(firstCueMs)) return null;
+  return { cueCount, firstCueMs, lastCueMs };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+
+  const result = await Promise.race([promise, timeout]);
+  if (timer) clearTimeout(timer);
+  return result as T | null;
+}
+
+async function analyzeSubtitleSync(
+  url: string,
+  mediaType: "movie" | "tv",
+): Promise<{ scoreDelta: number; syncConfidence: number; suggestedOffsetMs: number } | null> {
+  const raw = await withTimeout(fetchRawSubtitleText(url), 3500);
+  if (!raw) return null;
+
+  const stats = extractSubtitleTimingStats(raw);
+  if (!stats) {
+    return { scoreDelta: -120, syncConfidence: 20, suggestedOffsetMs: 0 };
+  }
+
+  let scoreDelta = 0;
+  const minCueTarget = mediaType === "movie" ? 220 : 90;
+
+  if (stats.cueCount >= minCueTarget) scoreDelta += 110;
+  else if (stats.cueCount < Math.floor(minCueTarget * 0.35)) scoreDelta -= 180;
+  else scoreDelta -= 40;
+
+  if (stats.firstCueMs >= 8000 && stats.firstCueMs <= 240000) scoreDelta += 80;
+  else if (stats.firstCueMs > 420000) scoreDelta -= 130;
+  else if (stats.firstCueMs < 800) scoreDelta -= 25;
+
+  const durationMin = Math.max(1, stats.lastCueMs / 60000);
+  const cuesPerMinute = stats.cueCount / durationMin;
+  if (cuesPerMinute >= 6 && cuesPerMinute <= 30) scoreDelta += 45;
+  else scoreDelta -= 35;
+
+  const syncConfidence = Math.max(1, Math.min(100, 55 + Math.round(scoreDelta / 5)));
+  return { scoreDelta, syncConfidence, suggestedOffsetMs: 0 };
+}
 
 function normalizeSubtitleUrl(raw: string): string {
   if (!raw) return "";
@@ -156,6 +311,9 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
   .inputValidator((d: unknown) => subtitlesSearchInput.parse(d))
   .handler(async ({ data }) => {
     const langPrefix = (data.language || "").toLowerCase().slice(0, 2);
+    const releaseTokens = tokenizeRelease(data.releaseName || "");
+    const titleTokens = tokenizeRelease(`${data.title || ""} ${data.originalTitle || ""}`);
+    const originalLanguage = (data.originalLanguage || "").toLowerCase().slice(0, 2);
 
     const isTargetLang = (l: string) => {
       if (!langPrefix) return true;
@@ -171,10 +329,21 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
     const scoreTrack = (s: any, isExact: boolean) => {
       let score = 0;
       const name = String(s?.release_name || s?.SubFileName || "").toLowerCase();
-      const relName = (data.releaseName || "").toLowerCase();
+      const relName = normalizeReleaseLabel(data.releaseName || "");
+      const subLang = String(s?.language || s?.lang || "").toLowerCase();
+      const subTokens = tokenizeRelease(name);
 
       // Exact match bonus
-      if (isExact) score += 500;
+      if (isExact) score += 520;
+
+      // Token overlap against stream release and title fingerprints.
+      const releaseOverlap = tokenOverlapScore(releaseTokens, subTokens);
+      const titleOverlap = tokenOverlapScore(titleTokens, subTokens);
+      score += Math.round(releaseOverlap * 700);
+      score += Math.round(titleOverlap * 260);
+
+      if (releaseOverlap >= 0.5) score += 180;
+      if (releaseOverlap <= 0.08 && releaseTokens.length > 0) score -= 90;
 
       // Release name similarity
       if (relName && name) {
@@ -191,15 +360,42 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
         }
       }
 
+      // FPS alignment often decides whether subtitles are visibly drifted.
+      const refFps = parseFpsToken(data.releaseName || "");
+      const subFps = parseFpsToken(name);
+      if (refFps && subFps) {
+        const delta = Math.abs(refFps - subFps);
+        if (delta <= 0.03) score += 130;
+        else if (delta <= 0.2) score += 35;
+        else score -= 120;
+      }
+
+      if (name.includes("forced") || name.includes("signs") || name.includes("sdh")) {
+        score -= 220;
+      }
+
+      if (name.includes("retail") || name.includes("official") || name.includes("proper")) {
+        score += 45;
+      }
+
       // Prefer hearing-impaired=false
-      if (s?.SubHearingImpaired === "0" || s?.hi === false) score += 10;
+      if (s?.SubHearingImpaired === "0" || s?.hi === false) score += 16;
+      if (s?.SubHearingImpaired === "1" || s?.hi === true) score -= 12;
+
+      if (originalLanguage && subLang.startsWith(originalLanguage) && !langPrefix) {
+        score += 30;
+      }
+
+      if (langPrefix && subLang.startsWith(langPrefix)) {
+        score += 35;
+      }
 
       // Bonus for OpenSubtitles Rating/Downloads (g)
       // We multiply heavily by 100 so that a highly rated community subtitle (e.g. rating 7 = +700)
       // successfully outranks automated exact-filename matches (+500), because community validation is superior.
       if (s?.g) {
         const pop = parseInt(s.g, 10);
-        if (!isNaN(pop)) score += pop * 100;
+        if (!isNaN(pop)) score += pop * 80;
       }
 
       return score;
@@ -237,6 +433,8 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
                 lang: String(s?.language || s?.lang || ""),
                 url: normalizeSubtitleUrl(String(s?.url || "")),
                 _score: scoreTrack(s, true),
+                _syncConfidence: 0,
+                _suggestedOffsetMs: 0,
               }))
               .filter((t: any) => Boolean(t.url));
           }
@@ -267,6 +465,8 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
                 lang: String(s?.lang || ""),
                 url: String(s?.url || ""),
                 _score: scoreTrack(s, false),
+                _syncConfidence: 0,
+                _suggestedOffsetMs: 0,
               };
             })
             .filter((t: any) => Boolean(t.url));
@@ -282,6 +482,23 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
         seenUrls.add(t.url);
         return true;
       });
+
+      // Deep sync analysis on top candidates only (network-safe cap).
+      const ANALYSIS_LIMIT = Math.min(8, all.length);
+      const analysisTargets = all
+        .sort((a, b) => (b._score || 0) - (a._score || 0))
+        .slice(0, ANALYSIS_LIMIT);
+
+      await Promise.allSettled(
+        analysisTargets.map(async (track) => {
+          const analysis = await analyzeSubtitleSync(track.url, data.type);
+          if (!analysis) return;
+
+          track._score = (track._score || 0) + analysis.scoreDelta;
+          track._syncConfidence = analysis.syncConfidence;
+          track._suggestedOffsetMs = analysis.suggestedOffsetMs;
+        }),
+      );
 
       // Sort by score descending — best match first
       all.sort((a, b) => (b._score || 0) - (a._score || 0));
