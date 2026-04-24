@@ -1321,6 +1321,7 @@ function WatchPage() {
                   ))}
                 </div>
               )}
+            </div>
             {/* Format/Server switcher */}
             <div className="relative">
               <button
