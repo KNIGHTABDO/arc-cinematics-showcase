@@ -9,8 +9,10 @@ interface AdvancedPlayerProps extends React.VideoHTMLAttributes<HTMLVideoElement
     mp4Url: string | null;
     originalUrl: string | null;
   };
+  /** Which format to play first. Defaults to "hls" (safest cross-browser). */
   preferredFormat?: "dash" | "hls" | "mp4" | "original";
-  streamUrl?: string; // For backward compatibility
+  /** Legacy single-URL prop — format is auto-detected from extension. */
+  streamUrl?: string;
   subtitleBlobUrl: string | null;
   startTime?: number;
 }
@@ -19,7 +21,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
   (
     {
       streamUrls,
-      preferredFormat = "dash",
+      preferredFormat = "hls",
       streamUrl,
       subtitleBlobUrl,
       startTime,
@@ -38,50 +40,53 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
       null,
     );
 
-    // Initial format setup
+    // ── Format selection ──────────────────────────────────────────────────────
+    // Runs whenever the URL set or preferred format changes.
+    // Drives currentFormat from props only — no secondary detection effect.
     useEffect(() => {
       if (streamUrls) {
-        if (preferredFormat === "original" && streamUrls.originalUrl) setCurrentFormat("original");
-        else if (preferredFormat === "mp4" && streamUrls.mp4Url) setCurrentFormat("mp4");
-        else if (preferredFormat === "hls" && streamUrls.hlsUrl) setCurrentFormat("hls");
-        else if (preferredFormat === "dash" && streamUrls.dashUrl) setCurrentFormat("dash");
-        else if (streamUrls.originalUrl) setCurrentFormat("original");
-        else if (streamUrls.mp4Url) setCurrentFormat("mp4");
-        else if (streamUrls.hlsUrl) setCurrentFormat("hls");
-        else if (streamUrls.dashUrl) setCurrentFormat("dash");
-      } else if (streamUrl) {
-        if (streamUrl.includes(".mpd")) setCurrentFormat("dash");
-        else if (streamUrl.includes(".mp4")) setCurrentFormat("mp4");
-        else setCurrentFormat("hls");
+        // Try preferredFormat first, then fall through in quality order.
+        if (preferredFormat === "hls" && streamUrls.hlsUrl) {
+          setCurrentFormat("hls");
+        } else if (preferredFormat === "mp4" && streamUrls.mp4Url) {
+          setCurrentFormat("mp4");
+        } else if (preferredFormat === "original" && streamUrls.originalUrl) {
+          setCurrentFormat("original");
+        } else if (preferredFormat === "dash" && streamUrls.dashUrl) {
+          setCurrentFormat("dash");
+        } else if (streamUrls.hlsUrl) {
+          setCurrentFormat("hls");
+        } else if (streamUrls.mp4Url) {
+          setCurrentFormat("mp4");
+        } else if (streamUrls.originalUrl) {
+          setCurrentFormat("original");
+        } else if (streamUrls.dashUrl) {
+          setCurrentFormat("dash");
+        }
+        return;
+      }
+
+      // Legacy streamUrl — detect from extension
+      if (streamUrl) {
+        if (streamUrl.includes(".mpd")) {
+          setCurrentFormat("dash");
+        } else if (streamUrl.includes(".m3u8")) {
+          setCurrentFormat("hls");
+        } else if (streamUrl.includes(".mp4") || streamUrl.includes(".webm")) {
+          setCurrentFormat("mp4");
+        } else {
+          // Raw CDN download URL (no recognisable extension) → treat as original
+          setCurrentFormat("original");
+        }
       }
     }, [streamUrls, preferredFormat, streamUrl]);
 
-    // Detect format when streamUrl changes externally
-    useEffect(() => {
-      if (!streamUrl) return;
-      let newFormat: "dash" | "hls" | "mp4" | "original" | null = null;
-      if (streamUrl.includes(".mpd")) newFormat = "dash";
-      else if (streamUrl.includes(".m3u8")) newFormat = "hls";
-      else if (streamUrl.includes(".mp4") || streamUrl.includes(".webm")) newFormat = "mp4";
-      else if (
-        streamUrl.includes("/d/") ||
-        !streamUrl.includes(".") ||
-        streamUrl.includes("real-debrid.com")
-      )
-        newFormat = "original";
-
-      if (newFormat && newFormat !== currentFormat) {
-        console.log(`[ARC] Detected format change from parent: ${newFormat}`);
-        setCurrentFormat(newFormat);
-      }
-    }, [streamUrl]);
-
-    // Reset and reload when URL or format changes
+    // ── Playback engine ───────────────────────────────────────────────────────
     useEffect(() => {
       const video = videoRef.current;
       if (!video || !currentFormat) return;
 
-      // Clean up previous players
+      // Tear down any previous player instances
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -91,100 +96,123 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
         dashRef.current = null;
       }
 
-      const url = streamUrls ? streamUrls[`${currentFormat}Url`] : streamUrl;
+      // Resolve the URL for this format
+      const url = streamUrls
+        ? streamUrls[`${currentFormat}Url` as keyof typeof streamUrls]
+        : streamUrl;
+
       if (!url) return;
 
-      console.log(
-        `[ARC] AdvancedPlayer switching to format: ${currentFormat.toUpperCase()} URL: ${url}`,
-      );
+      console.log(`[ARC] AdvancedPlayer → format: ${currentFormat.toUpperCase()}  url: ${url}`);
+
+      let disposed = false;
 
       const handlePlay = () => {
-        const promise = video.play();
-        if (promise !== undefined) {
-          promise.catch((error) => {
-            if (error.name !== "AbortError") {
-              console.warn("[ARC] Auto-play was prevented or interrupted:", error);
+        const p = video.play();
+        if (p !== undefined) {
+          p.catch((err) => {
+            if (err.name !== "AbortError") {
+              console.warn("[ARC] Autoplay prevented:", err);
             }
           });
         }
       };
 
+      // Cascade fallback: hls → mp4 → original → error
       const fallbackToNext = () => {
-        const fmt = currentFormat?.toUpperCase() || "UNKNOWN";
-        console.warn(`[ARC] Format ${fmt} failed. Attempting fallback...`);
+        const fmt = currentFormat.toUpperCase();
+        console.warn(`[ARC] ${fmt} failed — attempting fallback…`);
 
-        // Strict Strategy: Direct (original) -> Remux (mp4) -> Transcode (hls)
+        if (currentFormat === "dash") {
+          if (streamUrls?.hlsUrl) {
+            setCurrentFormat("hls");
+            return;
+          }
+        }
         if (currentFormat === "original") {
           if (streamUrls?.mp4Url) {
             setCurrentFormat("mp4");
-          } else if (streamUrls?.hlsUrl) {
-            setCurrentFormat("hls");
-          } else {
-            console.error("[ARC] Original failed and no remux/transcode available.");
-            if (props.onError) props.onError(new Event("error") as any);
+            return;
           }
-        } else if (currentFormat === "mp4") {
           if (streamUrls?.hlsUrl) {
             setCurrentFormat("hls");
-          } else {
-            console.error("[ARC] MP4 failed and no transcode available.");
-            if (props.onError) props.onError(new Event("error") as any);
+            return;
           }
-        } else if (currentFormat === "dash" && streamUrls?.hlsUrl) {
-          setCurrentFormat("hls");
-        } else {
-          console.error(`[ARC] All playback formats failed at ${fmt}.`);
-          if (props.onError) props.onError(new Event("error") as any);
         }
+        if (currentFormat === "mp4") {
+          if (streamUrls?.hlsUrl) {
+            setCurrentFormat("hls");
+            return;
+          }
+        }
+        // All formats exhausted
+        console.error("[ARC] All formats failed.");
+        if (props.onError) props.onError(new Event("error") as any);
       };
 
+      // ── DASH ──────────────────────────────────────────────────────────────
       if (currentFormat === "dash") {
         const player = dashjs.MediaPlayer().create();
         dashRef.current = player;
 
         player.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
-          console.error("[ARC] DASH error:", e);
-          if (e.error === "download" || e.error === "manifestError") {
-            fallbackToNext();
+          if (!disposed) {
+            console.error("[ARC] DASH error:", e);
+            if (e.error === "download" || e.error === "manifestError") fallbackToNext();
           }
         });
 
         player.initialize(video, url, Boolean(props.autoPlay), startTime || (null as any));
 
         player.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
-          if (props.onPlaying) {
-            const event = new Event("playing");
-            props.onPlaying(event as unknown as React.SyntheticEvent<HTMLVideoElement, Event>);
+          if (props.onPlaying && !disposed) {
+            props.onPlaying(
+              new Event("playing") as unknown as React.SyntheticEvent<HTMLVideoElement>,
+            );
           }
         });
 
         return () => {
+          disposed = true;
           player.destroy();
           dashRef.current = null;
         };
-      } else if (currentFormat === "hls") {
+      }
+
+      // ── HLS ───────────────────────────────────────────────────────────────
+      if (currentFormat === "hls") {
+        // Native HLS (Safari / iOS)
+        if (!Hls.isSupported() && video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          if (startTime && startTime > 0) video.currentTime = startTime;
+          if (props.autoPlay) video.addEventListener("loadedmetadata", handlePlay, { once: true });
+          const onErr = () => {
+            if (!disposed) fallbackToNext();
+          };
+          video.addEventListener("error", onErr);
+          return () => {
+            disposed = true;
+            video.removeEventListener("error", onErr);
+          };
+        }
+
         if (Hls.isSupported()) {
           const hls = new Hls({
-            // Worker & source
             enableWorker: true,
             preferManagedMediaSource: true,
             lowLatencyMode: false,
 
-            // Buffer tuning — smaller target = faster initial playback start.
-            // On a 10 Mbps connection, trying to pre-buffer 60 s causes a long
-            // black screen before any video appears.
-            maxBufferLength: 15, // target 15 s of buffer (default: 30 s)
-            maxMaxBufferLength: 30, // hard cap 30 s (was 60 s)
-            backBufferLength: 5, // retain 5 s behind playhead (saves memory)
+            // Buffer: optimized for fast seeking on 17Mbps Cloudflare connection
+            maxBufferLength: 8,
+            maxMaxBufferLength: 15,
+            backBufferLength: 0, // Immediately free memory behind playhead
+            maxBufferSize: 30 * 1000 * 1000, // 30 MB max internal buffer
 
-            // ABR — start conservative, let the algorithm ramp up naturally.
-            // Without this, hls.js requests the highest quality level first,
-            // which stalls immediately on limited connections.
-            startLevel: -1, // automatic quality selection
-            abrEwmaDefaultEstimate: 5_000_000, // assume 5 Mbps at startup (conservative)
+            // ABR: start slightly higher (5 Mbps) since Cloudflare is faster
+            startLevel: -1,
+            abrEwmaDefaultEstimate: 5_000_000,
 
-            // Segment / manifest retry — more retries for unreliable connections
-            // (packet loss, CDN hiccups on the Morocco → Amsterdam route).
+            // Retries for packet loss / CDN hiccups
             fragLoadingMaxRetry: 8,
             fragLoadingRetryDelay: 500,
             fragLoadingMaxRetryTimeout: 30_000,
@@ -193,108 +221,76 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
             levelLoadingMaxRetry: 5,
             levelLoadingRetryDelay: 500,
 
-            // Start position
             startPosition: startTime || -1,
           });
 
+          hlsRef.current = hls;
           hls.loadSource(url);
           hls.attachMedia(video);
-          hlsRef.current = hls;
 
-          hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-            console.log(`[ARC] HLS Manifest parsed. Levels found: ${data.levels.length}`);
-            if (props.autoPlay) handlePlay();
+          hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
+            console.log(`[ARC] HLS manifest parsed. Levels: ${data.levels.length}`);
+            if (props.autoPlay && !disposed) handlePlay();
           });
 
-          hls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  console.warn(
-                    `[ARC] Network error encountered (${data.details}), attempting to restart stream load...`,
-                  );
-                  hls.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  console.warn(
-                    `[ARC] Media decoding error encountered (${data.details}), attempting recovery...`,
-                  );
-                  hls.recoverMediaError();
-                  break;
-                default:
-                  console.error(
-                    "[ARC] Fatal unrecoverable HLS error. Destroying instance. Type:",
-                    data.type,
-                    "Details:",
-                    data.details,
-                  );
-                  hls.destroy();
-                  fallbackToNext();
-                  break;
-              }
-            } else {
-              console.warn(
-                `[ARC] Non-fatal HLS error. Type: ${data.type}, Details: ${data.details}`,
-              );
+          hls.on(Hls.Events.ERROR, (_e, data) => {
+            if (disposed) return;
+            if (!data.fatal) {
+              console.warn(`[ARC] Non-fatal HLS error: ${data.type} / ${data.details}`);
+              return;
+            }
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn(`[ARC] Fatal network error (${data.details}) — restarting load`);
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn(`[ARC] Fatal media error (${data.details}) — recovering`);
+                hls.recoverMediaError();
+                break;
+              default:
+                console.error(`[ARC] Unrecoverable HLS error: ${data.type} / ${data.details}`);
+                hls.destroy();
+                hlsRef.current = null;
+                fallbackToNext();
             }
           });
 
           return () => {
+            disposed = true;
             hls.destroy();
             hlsRef.current = null;
           };
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          video.src = url;
-          if (startTime && startTime > 0) {
-            video.currentTime = startTime;
-          }
-          if (props.autoPlay) {
-            video.addEventListener("loadedmetadata", handlePlay, { once: true });
-          }
-          const handleError = () => fallbackToNext();
-          video.addEventListener("error", handleError);
-          return () => video.removeEventListener("error", handleError);
-        } else {
+        }
+
+        // hls.js not supported and no native HLS → cascade
+        fallbackToNext();
+        return;
+      }
+
+      // ── MP4 / Original (direct src) ───────────────────────────────────────
+      video.src = url;
+      if (startTime && startTime > 0) video.currentTime = startTime;
+      if (props.autoPlay) video.addEventListener("loadedmetadata", handlePlay, { once: true });
+
+      const onErr = () => {
+        if (!disposed) {
+          console.warn(`[ARC] ${currentFormat.toUpperCase()} playback error — falling back`);
           fallbackToNext();
         }
-      } else if (currentFormat === "mp4") {
-        video.src = url;
-        if (startTime && startTime > 0) {
-          video.currentTime = startTime;
-        }
-        if (props.autoPlay) {
-          video.addEventListener("loadedmetadata", handlePlay, { once: true });
-        }
-        const handleError = () => fallbackToNext();
-        video.addEventListener("error", handleError);
-        return () => video.removeEventListener("error", handleError);
-      } else if (currentFormat === "original") {
-        video.src = url;
-        if (startTime && startTime > 0) {
-          video.currentTime = startTime;
-        }
-        if (props.autoPlay) {
-          video.addEventListener("loadedmetadata", handlePlay, { once: true });
-        }
-        const handleError = () => fallbackToNext();
-        video.addEventListener("error", handleError);
-        return () => video.removeEventListener("error", handleError);
-      }
-    }, [currentFormat, streamUrls, streamUrl, videoRef, props.autoPlay, startTime]);
+      };
+      video.addEventListener("error", onErr);
 
-    const activeUrl = currentFormat
-      ? streamUrls
-        ? streamUrls[`${currentFormat}Url`]
-        : streamUrl
-      : "";
+      return () => {
+        disposed = true;
+        video.removeEventListener("error", onErr);
+      };
+    }, [currentFormat, streamUrls, streamUrl]);
 
     return (
       <video ref={videoRef} playsInline className={className} {...props}>
         {subtitleBlobUrl && (
           <track kind="subtitles" src={subtitleBlobUrl} srcLang="en" label="English" default />
-        )}
-        {currentFormat === "hls" && activeUrl && (
-          <source src={activeUrl} type="application/x-mpegURL" />
         )}
       </video>
     );

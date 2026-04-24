@@ -31,7 +31,13 @@ const shiftVttTime = (vttText: string, offsetSeconds: number): string => {
   });
 };
 import { supabase } from "@/lib/supabase";
-import { getStreamForMovie, resolvePlaybackStream } from "@/lib/server/streams";
+import {
+  getStreamForMovie,
+  pollTorrentStatus,
+  resolvePlaybackStream,
+  TERMINAL_STATUSES,
+  CLIENT_POLL_INTERVALS_MS,
+} from "@/lib/server/streams";
 import { getSubtitlesForMedia, getSubtitleVtt } from "@/lib/server/subtitles";
 import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
 import { useSettings } from "@/lib/store/settings";
@@ -91,7 +97,9 @@ function WatchPage() {
     mp4Url: string | null;
     originalUrl: string | null;
   }>({ dashUrl: null, hlsUrl: null, mp4Url: null, originalUrl: null });
-  const [preferredFormat, setPreferredFormat] = useState<"dash" | "hls" | "mp4">("hls");
+  const [preferredFormat, setPreferredFormat] = useState<"dash" | "hls" | "mp4" | "original">(
+    "hls",
+  );
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [streamFilename, setStreamFilename] = useState<string>("");
   /** Stable RD hoster URL returned by getStreamForMovie. Used for retry without re-polling. */
@@ -197,55 +205,82 @@ function WatchPage() {
             ? "ios_safari"
             : "default";
 
-        // ── Phase 1: Torrent resolution ──────────────────────────────────────────
-        // Finds the torrent via Torrentio, adds to RD, then polls RD's servers
-        // (GET /torrents/info) until status === "downloaded". No unrestriction yet.
+        // ── Phase 1: Fast torrent init (<5 s, safe for Vercel Hobby) ────────────
+        // getStreamForMovie does TMDB + Torrentio + addMagnet + ONE status check.
+        // It does NOT poll — long polling runs here on the client to avoid
+        // Vercel serverless function timeout limits (10 s Hobby / 60 s Pro).
         setBitrateWarning(null);
         setStreamLoadStatus("Locating stream on Real-Debrid…");
 
-        const resolveRequest = getStreamForMovie({
-          data: {
-            watchId: id,
-            preferredQuality: quality,
-            clientProfile,
-          },
+        const torrentRes: any = await getStreamForMovie({
+          data: { watchId: id, preferredQuality: quality, clientProfile },
         });
-
-        let resolverTimeout: ReturnType<typeof setTimeout> | undefined;
-        const timeoutRequest = new Promise<never>((_, reject) => {
-          resolverTimeout = setTimeout(() => {
-            reject(new Error("Stream lookup took too long. Please retry."));
-          }, 60000);
-        });
-
-        let torrentRes: any;
-        try {
-          torrentRes = await Promise.race([resolveRequest, timeoutRequest]);
-        } finally {
-          if (resolverTimeout) clearTimeout(resolverTimeout);
-        }
         if (cancelled) return;
 
         if (torrentRes.error) {
           throw new Error(torrentRes.error);
         }
-        if (!torrentRes.rdHostLink) {
-          throw new Error("Resolver returned no stream link.");
+        if (!torrentRes.torrentId) {
+          throw new Error("No torrent ID returned — please retry.");
         }
 
-        // Store the stable hoster URL so retryPlayback() can re-unrestrict without re-polling
-        setRdHostLink(torrentRes.rdHostLink);
+        // ── Phase 1.5: Client-side polling until status === "downloaded" ─────────
+        // Each poll is a single lightweight server call (<1 s). The loop runs in
+        // the browser, completely bypassing serverless timeout restrictions.
+        let rdHostLink: string | null = torrentRes.rdHostLink ?? null;
 
-        // ── Phase 2: Lazy unrestriction at playback time ──────────────────────────
-        // The rdHostLink (hoster URL) is stable and long-lived. We call
-        // /unrestrict/link HERE — only at the moment the user is about to watch —
-        // so the CDN download URL is always fresh and never stale.
-        // The bitrate/codec filter also runs here to pick the safest format.
+        if (!rdHostLink) {
+          setStreamLoadStatus("Stream found — waiting for Real-Debrid to process…");
+          const clientWait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+          let pollCount = 0;
+          const maxPolls = 90; // ~6 min ceiling with back-off intervals
+
+          while (!rdHostLink && !cancelled && pollCount < maxPolls) {
+            const interval =
+              CLIENT_POLL_INTERVALS_MS[Math.min(pollCount, CLIENT_POLL_INTERVALS_MS.length - 1)];
+            await clientWait(interval);
+            if (cancelled) return;
+
+            const statusRes: any = await pollTorrentStatus({
+              data: { torrentId: torrentRes.torrentId },
+            });
+            if (cancelled) return;
+
+            if (statusRes.error || TERMINAL_STATUSES.has(statusRes.status ?? "")) {
+              throw new Error(
+                statusRes.error ||
+                  `Stream failed with status "${statusRes.status}". Try another quality or title.`,
+              );
+            }
+
+            if (statusRes.status === "downloaded" && statusRes.rdHostLink) {
+              rdHostLink = statusRes.rdHostLink;
+            } else {
+              const pct =
+                typeof statusRes.progress === "number" && statusRes.progress > 0
+                  ? ` (${Math.round(statusRes.progress)}%)`
+                  : "";
+              setStreamLoadStatus(`Real-Debrid: ${statusRes.status ?? "processing"}${pct}…`);
+            }
+            pollCount++;
+          }
+
+          if (!rdHostLink) {
+            throw new Error("Real-Debrid did not finish processing in time. Please retry.");
+          }
+        }
+
+        // Store stable hoster URL for the Retry button (re-unrestricts without re-polling)
+        setRdHostLink(rdHostLink);
+
+        // ── Phase 2: Lazy unrestriction at playback time ─────────────────────────
+        // Calls /unrestrict/link NOW — only when the user is about to watch —
+        // so the CDN download URL is always fresh. Also applies bitrate filter.
         setStreamLoadStatus("Preparing playback link…");
 
         const playbackRes = await resolvePlaybackStream({
           data: {
-            rdHostLink: torrentRes.rdHostLink,
+            rdHostLink,
             clientProfile,
             preferredAudioLanguage: preferredAudioLanguage.slice(0, 2) || undefined,
             preferredQuality: quality,
@@ -266,9 +301,7 @@ function WatchPage() {
           });
           setPreferredFormat(playbackRes.preferredFormat || "hls");
 
-          // Set streamUrl to the format-appropriate primary URL so that:
-          //  - The loading state exits (streamUrl !== null)
-          //  - The format-aware HLS detection in the player useEffect works correctly
+          // Pick the best URL based on the format decision (MP4 for speed, HLS for safety)
           const primaryUrl =
             playbackRes.preferredFormat === "hls"
               ? playbackRes.hlsUrl || playbackRes.streamUrl
@@ -429,15 +462,11 @@ function WatchPage() {
 
       console.log(`[ARC] Switching to format: ${format}`);
       setSelectedFormat(format);
+      setPreferredFormat(format);
       setStreamUrl(url);
       setStreamReady(false);
       setBuffering(true);
       setHasRestoredProgress(false);
-
-      const v = videoRef.current;
-      if (v) {
-        v.load();
-      }
     },
     [streamUrls],
   );
@@ -498,6 +527,7 @@ function WatchPage() {
           originalUrl: playbackRes.originalUrl ?? null,
         });
         setPreferredFormat(playbackRes.preferredFormat || "hls");
+        // Same rule in retryPlayback: use preferred format
         const primaryUrl =
           playbackRes.preferredFormat === "hls"
             ? playbackRes.hlsUrl || playbackRes.streamUrl
@@ -963,6 +993,18 @@ function WatchPage() {
 
   // === LOADING STATE ===
   if (!streamUrl) {
+    // Derive which stage we're in from the status message for the step indicators
+    const isStage1 = streamLoadStatus.startsWith("Locating");
+    const isStage2 =
+      streamLoadStatus.startsWith("Stream found") || streamLoadStatus.startsWith("Real-Debrid:");
+    const isStage3 = streamLoadStatus.startsWith("Preparing");
+
+    const stages = [
+      { label: "Finding stream", done: !isStage1, active: isStage1 },
+      { label: "Caching on RD", done: isStage3, active: isStage2 },
+      { label: "Generating link", done: false, active: isStage3 },
+    ];
+
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-black relative overflow-hidden">
         {backdrop && (
@@ -971,12 +1013,64 @@ function WatchPage() {
             style={{ backgroundImage: `url(${backdrop})` }}
           />
         )}
-        <div className="relative z-10 flex flex-col items-center">
-          <div className="h-16 w-16 animate-spin rounded-full border-2 border-transparent border-t-arc-accent border-r-arc-accent"></div>
-          <p className="mt-8 font-display text-xl tracking-[0.3em] text-arc-text/60 animate-pulse uppercase">
-            Extracting Secure Stream
+        <div className="relative z-10 flex flex-col items-center w-full max-w-sm px-6">
+          {/* Spinner */}
+          <div className="h-16 w-16 animate-spin rounded-full border-2 border-transparent border-t-arc-accent border-r-arc-accent" />
+
+          {/* Title */}
+          <p className="mt-8 font-display text-xl tracking-[0.25em] text-arc-text/70 animate-pulse uppercase">
+            {title !== "Loading..." ? title : "Loading…"}
           </p>
-          <p className="mt-2 text-sm text-arc-muted">{streamLoadStatus}</p>
+
+          {/* Live status message */}
+          <p className="mt-3 text-sm text-arc-muted text-center leading-relaxed min-h-[2.5rem]">
+            {streamLoadStatus}
+          </p>
+
+          {/* Stage indicators */}
+          <div className="mt-8 flex items-center gap-0 w-full">
+            {stages.map((stage, i) => (
+              <div key={stage.label} className="flex items-center flex-1">
+                <div className="flex flex-col items-center flex-1">
+                  <div
+                    className={`h-2.5 w-2.5 rounded-full transition-all duration-500 ${
+                      stage.done
+                        ? "bg-arc-accent scale-110"
+                        : stage.active
+                          ? "bg-arc-accent animate-pulse"
+                          : "bg-white/20"
+                    }`}
+                  />
+                  <span
+                    className={`mt-2 text-[10px] text-center leading-tight transition-colors duration-300 ${
+                      stage.done || stage.active ? "text-arc-accent/80" : "text-white/30"
+                    }`}
+                  >
+                    {stage.label}
+                  </span>
+                </div>
+                {i < stages.length - 1 && (
+                  <div
+                    className={`h-px flex-1 mx-1 transition-all duration-700 ${
+                      stages[i + 1].done || stages[i + 1].active || stage.done
+                        ? "bg-arc-accent/50"
+                        : "bg-white/10"
+                    }`}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Animated dots when waiting for RD cache */}
+          {isStage2 && (
+            <p className="mt-6 text-xs text-white/30 text-center">
+              Real-Debrid is verifying the file on their servers — this is normal for first-time
+              access.
+              <br />
+              Cached titles start instantly on repeat watches.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -1022,6 +1116,7 @@ function WatchPage() {
       <AdvancedPlayer
         ref={videoRef}
         autoPlay
+        preferredFormat={preferredFormat}
         startTime={savedProgress || 0}
         className="h-full w-full object-contain"
         streamUrl={streamUrl || ""}

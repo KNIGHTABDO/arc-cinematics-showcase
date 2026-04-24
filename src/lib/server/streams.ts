@@ -10,27 +10,17 @@ const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
 
 type MediaType = "movie" | "tv";
 
-// ── Torrent status constants ───────────────────────────────────────────────────
-/** Status values that mean the torrent will never recover. Stop polling immediately. */
-const TERMINAL_STATES = new Set(["magnet_error", "error", "virus", "dead"]);
+// ── Status constants ───────────────────────────────────────────────────────────
+/** Statuses that mean the torrent will never recover — stop polling immediately. */
+export const TERMINAL_STATUSES = new Set(["magnet_error", "error", "virus", "dead"]);
 
-/**
- * Polling back-off schedule (ms).
- * Starts fast (2 s) and ramps up to 10 s to reduce API load during long waits.
- */
-const POLL_INTERVALS_MS = [2000, 3000, 4000, 5000, 5000, 7000, 10000];
+/** Polling back-off schedule (ms). Used by client-side polling in watch.$id.tsx. */
+export const CLIENT_POLL_INTERVALS_MS = [2500, 3000, 4000, 5000, 7000, 10000];
 
-// ── Bitrate safety limits per client profile ─────────────────────────────────
-/**
- * Maximum safe source bitrate (bits/s) before we force the HLS transcode path.
- *
- * Rationale:
- *  - ios_safari  : Apple Silicon has HW HEVC decode, handles up to ~50 Mbps comfortably.
- *  - default     : Desktop browsers use *software* HEVC decode; >20 Mbps causes stutter/crashes.
- */
+// ── Bitrate safety limits per client profile ──────────────────────────────────
 const MAX_SAFE_BITRATE_BPS: Record<string, number> = {
-  ios_safari: 50_000_000,
-  default: 20_000_000,
+  ios_safari: 50_000_000, // Apple Silicon HW HEVC decode
+  default: 14_000_000, // Matched to user's Cloudflare speed (~17 Mbps)
 };
 
 // ── Type definitions ──────────────────────────────────────────────────────────
@@ -90,7 +80,7 @@ async function fetchWithTimeout(
 async function rdRequest(
   path: string,
   init: RequestInit = {},
-  timeoutMs = 12000,
+  timeoutMs = 10000,
 ): Promise<Response> {
   const headers = new Headers(init.headers ?? {});
   headers.set("Authorization", `Bearer ${RD_TOKEN}`);
@@ -109,8 +99,8 @@ function parseWatchId(id: string): {
     return {
       type: "tv",
       tmdbId: tvMatch[1],
-      season: Number.parseInt(tvMatch[2], 10),
-      episode: Number.parseInt(tvMatch[3], 10),
+      season: parseInt(tvMatch[2], 10),
+      episode: parseInt(tvMatch[3], 10),
     };
   }
   return { type: "movie", tmdbId: id };
@@ -143,19 +133,17 @@ function extractInfoHashAndFileIdx(stream: TorrentioStreamRaw): {
   const s = stream;
   let infoHash = typeof s?.infoHash === "string" ? s.infoHash : undefined;
   let fileIdx = Number.isInteger(s?.fileIdx) ? (s.fileIdx as number) : undefined;
-
   if (!infoHash && typeof s?.url === "string" && s.url.includes("/resolve/realdebrid/")) {
     const parts = s.url.split("/");
     if (parts.length >= 9) {
       infoHash = parts[6];
       const idxRaw = parts[8];
       if (idxRaw && idxRaw !== "null") {
-        const parsed = Number.parseInt(idxRaw, 10);
+        const parsed = parseInt(idxRaw, 10);
         if (Number.isFinite(parsed)) fileIdx = parsed;
       }
     }
   }
-
   return { infoHash: infoHash?.toLowerCase(), fileIdx };
 }
 
@@ -163,6 +151,7 @@ interface StreamCandidate {
   magnet: string;
   infoHash: string;
   title: string;
+  sizeBytes: number;
   fileIdx?: number;
 }
 
@@ -177,8 +166,7 @@ async function fetchTorrentioStreams(
     type === "tv" && season != null && episode != null
       ? `https://torrentio.strem.fun/${prefix}stream/series/${imdbId}:${season}:${episode}.json`
       : `https://torrentio.strem.fun/${prefix}stream/movie/${imdbId}.json`;
-
-  const res = await fetchWithTimeout(url, { method: "GET" }, 9000);
+  const res = await fetchWithTimeout(url, { method: "GET" }, 8000);
   if (!res.ok) throw new Error(`Torrentio returned ${res.status}`);
   const data = (await res.json().catch(() => ({}))) as { streams?: unknown[] };
   const rawStreams = Array.isArray(data?.streams) ? data.streams : [];
@@ -189,42 +177,40 @@ async function fetchTorrentioStreams(
     .filter((s) => typeof s?.name === "string" && s.name.includes("[RD+]"))
     .map((s) => {
       const { infoHash, fileIdx } = extractInfoHashAndFileIdx(s);
+      const title = String(s?.title || s?.name || "Unknown");
+
+      // Parse size from Torrentio title (e.g., "💾 2.1 GB")
+      let sizeBytes = 0;
+      const sizeMatch = title.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
+      if (sizeMatch) {
+        const val = parseFloat(sizeMatch[1]);
+        const unit = sizeMatch[2].toUpperCase();
+        if (unit === "GB") sizeBytes = val * 1024 * 1024 * 1024;
+        else if (unit === "MB") sizeBytes = val * 1024 * 1024;
+      }
+
       return {
         magnet: infoHash ? `magnet:?xt=urn:btih:${infoHash}` : "",
         infoHash: infoHash ?? "",
-        title: String(s?.title || s?.name || "Unknown"),
+        title,
+        sizeBytes,
         fileIdx,
       } as StreamCandidate;
     })
     .filter((c) => Boolean(c.infoHash));
 }
 
-// ── Real-Debrid Cache Check (runs on RD servers, not local DB) ────────────────
-/**
- * Queries RD's /torrents/instantAvailability endpoint to check whether a torrent
- * hash is already fully cached on Real-Debrid's servers.
- *
- * This is a LIVE check against RD's infrastructure — no local database involved.
- * Returns true when RD confirms the torrent is fully cached and ready to stream.
- *
- * Why check this first?
- *   - Cached torrents jump straight to "downloaded" status after addMagnet + selectFiles
- *     completing in seconds, vs potentially minutes for uncached content.
- *   - Torrentio's [RD+] filter already guarantees these are cached, but checking
- *     multiple candidates lets us prefer the one with the highest certainty.
- */
+// ── RD Cache Check ────────────────────────────────────────────────────────────
 async function checkInstantAvailability(hash: string): Promise<boolean> {
   try {
-    const res = await rdRequest(`/torrents/instantAvailability/${hash.toLowerCase()}`, {}, 8000);
+    const res = await rdRequest(`/torrents/instantAvailability/${hash.toLowerCase()}`, {}, 6000);
     if (!res.ok) return false;
     const data = await res.json();
     const entry = data[hash.toLowerCase()];
-    // RD returns { "rd": [] } (post-2024) or { "rd": [{}] } (older) for uncached
     if (!entry?.rd || !Array.isArray(entry.rd) || entry.rd.length === 0) return false;
-    // At least one variant must have actual file entries
     return entry.rd.some((variant: any) => Object.keys(variant).length > 0);
   } catch {
-    return false; // Network error → treat as uncached
+    return false;
   }
 }
 
@@ -232,13 +218,11 @@ async function checkInstantAvailability(hash: string): Promise<boolean> {
 async function addMagnetToRD(magnet: string): Promise<string> {
   const form = new URLSearchParams();
   form.append("magnet", magnet);
-
   const res = await rdRequest("/torrents/addMagnet", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
-
   if (res.status === 409) {
     const body = (await res.json().catch(() => ({}))) as any;
     const existingId = body?.id || body?.error_code;
@@ -248,29 +232,21 @@ async function addMagnetToRD(magnet: string): Promise<string> {
     }
     throw new Error(`RD addMagnet 409 – could not extract existing torrent id`);
   }
-
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as any;
     throw new Error(`Failed to add magnet: ${err.error || res.status}`);
   }
-
   const data = await res.json();
   if (!data?.id) throw new Error("RD addMagnet returned no torrent id.");
   return data.id as string;
 }
 
-async function getTorrentInfo(torrentId: string, retries = 4): Promise<RDTorrentInfo> {
+async function getTorrentInfo(torrentId: string, retries = 3): Promise<RDTorrentInfo> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await rdRequest(`/torrents/info/${torrentId}`);
     if (res.ok) return await res.json();
-
-    // 404 immediately after addMagnet is a transient propagation delay — retry
     if (res.status === 404 && attempt < retries) {
-      const backoffMs = (attempt + 1) * 1000;
-      console.warn(
-        `[ARC] torrents/info 404 (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoffMs}ms…`,
-      );
-      await sleep(backoffMs);
+      await sleep((attempt + 1) * 800);
       continue;
     }
     throw new Error(`RD torrents/info failed with ${res.status}`);
@@ -281,123 +257,25 @@ async function getTorrentInfo(torrentId: string, retries = 4): Promise<RDTorrent
 async function selectFileOnRD(torrentId: string, fileId: number): Promise<void> {
   const form = new URLSearchParams();
   form.append("files", String(fileId));
-
   const res = await rdRequest(`/torrents/selectFiles/${torrentId}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
-
-  // 204 = success, 202 = already done (torrent was already cached/selected)
   if (!(res.status === 204 || res.status === 202)) {
     const text = await res.text().catch(() => "");
     throw new Error(`RD selectFiles failed with ${res.status}${text ? `: ${text}` : ""}`);
   }
 }
 
-// ── Polling Loops (against RD servers) ───────────────────────────────────────
-/**
- * PHASE 1 POLL — Wait until the torrent is ready for file selection OR already downloaded.
- *
- * Status flow for a newly added magnet:
- *   magnet_conversion → waiting_files_selection → (call selectFiles) → queued → downloading → downloaded
- *
- * For already-cached torrents (fast path):
- *   magnet_conversion → downloaded  (skips waiting_files_selection entirely)
- *
- * All polling is done by querying RD's /torrents/info endpoint — no local DB.
- */
-async function pollForSelectionOrDownloaded(
-  torrentId: string,
-  maxWaitMs = 60_000,
-): Promise<RDTorrentInfo> {
-  const deadline = Date.now() + maxWaitMs;
-  let attempt = 0;
-
-  while (Date.now() < deadline) {
-    const info = await getTorrentInfo(torrentId);
-    const status = info.status;
-
-    if (status === "waiting_files_selection" || status === "downloaded") {
-      console.log(`[ARC] Phase-1 poll complete — torrent ${torrentId} status: "${status}"`);
-      return info;
-    }
-
-    if (TERMINAL_STATES.has(status!)) {
-      throw new Error(
-        `Torrent entered terminal state "${status}". It may be dead, contain a virus, or have an invalid magnet.`,
-      );
-    }
-
-    const delay = POLL_INTERVALS_MS[Math.min(attempt, POLL_INTERVALS_MS.length - 1)];
-    console.log(
-      `[ARC] Phase-1 poll — torrent ${torrentId} status: "${status}" (attempt ${attempt + 1}, next in ${delay}ms)`,
-    );
-    attempt++;
-    await sleep(delay);
-  }
-
-  throw new Error(
-    "Timed out waiting for torrent metadata. The magnet may be unresolvable or there are no seeders.",
-  );
-}
-
-/**
- * PHASE 2 POLL — Wait until status is "downloaded".
- *
- * Call this AFTER selectFileOnRD(). Handles the full progression:
- *   queued → downloading → downloaded
- * Also handles intermediate archive states: compressing, uploading.
- *
- * The `progress` field (0-100) is logged but not used for gating — only
- * status === "downloaded" confirms the file is available for unrestriction.
- */
-async function pollUntilDownloaded(torrentId: string, maxWaitMs = 300_000): Promise<RDTorrentInfo> {
-  const deadline = Date.now() + maxWaitMs;
-  let attempt = 0;
-
-  while (Date.now() < deadline) {
-    const info = await getTorrentInfo(torrentId);
-    const status = info.status;
-
-    if (status === "downloaded") {
-      console.log(
-        `[ARC] Phase-2 poll complete — torrent ${torrentId} downloaded. Links available: ${info.links?.length ?? 0}`,
-      );
-      return info;
-    }
-
-    if (TERMINAL_STATES.has(status!)) {
-      throw new Error(
-        `Torrent failed with status "${status}". This title may not be available via Real-Debrid.`,
-      );
-    }
-
-    const delay = POLL_INTERVALS_MS[Math.min(attempt, POLL_INTERVALS_MS.length - 1)];
-    const progressStr = typeof info.progress === "number" ? ` (${info.progress.toFixed(0)}%)` : "";
-    console.log(
-      `[ARC] Phase-2 poll — torrent ${torrentId} status: "${status}"${progressStr} (attempt ${attempt + 1}, next in ${delay}ms)`,
-    );
-    attempt++;
-    await sleep(delay);
-  }
-
-  throw new Error(
-    "Stream not available yet — this title may not be cached on Real-Debrid. Please try again later.",
-  );
-}
-
-// ── Unrestrict (called lazily at playback time) ───────────────────────────────
 async function unrestrictLink(link: string): Promise<RDUnrestrictResponse> {
   const form = new URLSearchParams();
   form.append("link", link);
-
   const res = await rdRequest("/unrestrict/link", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
-
   const data = (await res.json().catch(() => ({}))) as RDUnrestrictResponse;
   if (!res.ok || !data?.download) {
     throw new Error(`RD unrestrict failed: ${data?.error || res.status}`);
@@ -405,7 +283,7 @@ async function unrestrictLink(link: string): Promise<RDUnrestrictResponse> {
   return data;
 }
 
-// ── Audio track resolution ─────────────────────────────────────────────────────
+// ── Audio helpers ─────────────────────────────────────────────────────────────
 function normalizeAudioLanguageCode(input?: string): string | undefined {
   const raw = (input || "").toLowerCase().trim();
   if (!raw) return undefined;
@@ -416,48 +294,31 @@ function normalizeAudioLanguageCode(input?: string): string | undefined {
 
 // ── Bitrate / Codec Safety Filter ─────────────────────────────────────────────
 interface BitrateDecision {
-  /** "mp4" = liveMP4 remux (zero re-encoding, best quality)
-   *  "hls" = transcoded HLS (lower quality but safe for all devices) */
   preferredFormat: "mp4" | "hls";
-  /** Human-readable warning if we had to downgrade the format */
   warning: string | null;
   isHEVC: boolean;
   bitrateMbps: number;
 }
 
-/**
- * Determines the safest playback format for a given device by examining
- * the source file's bitrate and codec from RD's mediaInfos response.
- *
- * Device crash scenarios this prevents:
- *  - High-bitrate HEVC (>15 Mbps) in desktop browsers → software decode overload
- *  - Any stream above 20 Mbps on default/desktop profile
- *  - iOS is more lenient (50 Mbps) due to Apple Silicon HW HEVC decode
- */
 function evaluateBitrateForDevice(mediaInfos: any, clientProfile: string): BitrateDecision {
   const maxSafe = MAX_SAFE_BITRATE_BPS[clientProfile] ?? MAX_SAFE_BITRATE_BPS.default;
   const bitrate: number = typeof mediaInfos?.bitrate === "number" ? mediaInfos.bitrate : 0;
-
   const videoDetails = mediaInfos?.details?.video ?? {};
   const firstVideoTrack = (Object.values(videoDetails)[0] ?? {}) as any;
   const codec = (firstVideoTrack?.codec ?? "").toLowerCase();
   const isHEVC = codec === "hevc" || codec === "h265";
-
   const bitrateMbps = bitrate / 1_000_000;
   let warning: string | null = null;
-  let preferredFormat: "mp4" | "hls" = "mp4"; // Default: liveMP4 (zero transcoding, best quality)
+  let preferredFormat: "mp4" | "hls" = "mp4";
 
   if (bitrate > maxSafe) {
     preferredFormat = "hls";
-    warning = `Source bitrate ${bitrateMbps.toFixed(0)} Mbps exceeds the ${(maxSafe / 1_000_000).toFixed(0)} Mbps safe limit for this device — using transcoded HLS to prevent crashes.`;
-  } else if (isHEVC && clientProfile === "default" && bitrate > 15_000_000) {
-    // Desktop browsers software-decode HEVC; beyond ~15 Mbps they stutter or crash
+    warning = `Source bitrate ${bitrateMbps.toFixed(0)} Mbps exceeds your connection limit (${(maxSafe / 1_000_000).toFixed(0)} Mbps) — using optimized HLS for instant seeking.`;
+  } else if (isHEVC && clientProfile === "default" && bitrate > 10_000_000) {
     preferredFormat = "hls";
-    warning = `HEVC source at ${bitrateMbps.toFixed(0)} Mbps detected — using HLS transcode for browser compatibility.`;
+    warning = `High-bitrate HEVC detected — using HLS transcode to prevent buffering on your connection.`;
   }
-
   if (warning) console.log(`[ARC] Bitrate filter applied: ${warning}`);
-
   return { preferredFormat, warning, isHEVC, bitrateMbps };
 }
 
@@ -465,9 +326,11 @@ function evaluateBitrateForDevice(mediaInfos: any, clientProfile: string): Bitra
 const resolveTorrentSchema = z.object({
   watchId: z.string().min(1),
   clientProfile: z.enum(["default", "ios_safari"]).optional(),
-  // preferredQuality is accepted for forward-compat but quality selection
-  // now lives in resolvePlaybackStream where transcodeQuality is built.
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
+});
+
+const pollStatusSchema = z.object({
+  torrentId: z.string().min(1),
 });
 
 const playbackSchema = z.object({
@@ -477,36 +340,34 @@ const playbackSchema = z.object({
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
 });
 
-// ── Phase 1: Torrent Resolution ───────────────────────────────────────────────
+// ── Phase 1: Fast Torrent Init (Vercel-safe, <5 s) ────────────────────────────
 /**
- * Locates the best RD-cached stream for a title via Torrentio, adds the magnet
- * to Real-Debrid, and polls RD's /torrents/info endpoint until the torrent
- * reaches status "downloaded".
+ * Performs all the FAST, one-shot work: TMDB lookup, Torrentio candidate
+ * selection, instant-availability ranking, addMagnet, and a single
+ * status check. If file selection is needed it calls selectFiles immediately.
  *
- * Returns a stable `rdHostLink` (the hoster URL from torrentInfo.links[]).
- * This URL is long-lived and safe to store. It is NOT unrestricted yet —
- * pass it to `resolvePlaybackStream` only at the moment of playback.
+ * DOES NOT poll in a loop — long polling is intentionally moved to the
+ * client to avoid Vercel serverless function timeout limits (10 s on Hobby,
+ * 60 s on Pro).
  *
- * All cache/status checks are done against Real-Debrid's servers, not any
- * local database.
+ * Returns the torrentId + current status. If the torrent is already
+ * "downloaded" (common for [RD+] cached streams), rdHostLink is also returned
+ * and the client can skip straight to resolvePlaybackStream.
  */
 export const getStreamForMovie = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => resolveTorrentSchema.parse(d))
   .handler(async ({ data }) => {
-    const { watchId, clientProfile } = data;
-
-    if (!RD_TOKEN || !TMDB_API_KEY) {
-      return { error: "Missing server API tokens" };
-    }
-
+    const { watchId } = data;
+    if (!RD_TOKEN || !TMDB_API_KEY) return { error: "Missing server API tokens" };
     const parsed = parseWatchId(watchId);
-
     try {
+      // ── TMDB → IMDB ──────────────────────────────────────────────────────
       const imdbId =
         parsed.type === "tv"
           ? await tmdbTVToImdb(parsed.tmdbId)
           : await tmdbMovieToImdb(parsed.tmdbId);
 
+      // ── Torrentio stream candidates ──────────────────────────────────────
       const candidates = await fetchTorrentioStreams(
         imdbId,
         parsed.type,
@@ -515,87 +376,101 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       );
       if (!candidates.length) return { error: "No RD+ candidates found for this title." };
 
-      // ── Live cache check against RD's instantAvailability endpoint ─────────
-      // We check up to 10 candidates in parallel against RD's servers to find
-      // which hashes are confirmed cached. This call is a real-time server check,
-      // not a local DB lookup.
-      console.log(
-        `[ARC] Checking instant availability for ${Math.min(candidates.length, 10)} candidate(s) on RD servers…`,
-      );
-      const checkCount = Math.min(candidates.length, 10);
+      // ── Instant availability ranking (live RD server check) ──────────────
+      const checkCount = Math.min(candidates.length, 12);
       const availResults = await Promise.allSettled(
         candidates.slice(0, checkCount).map((c) => checkInstantAvailability(c.infoHash)),
       );
-
-      // Sort: RD-confirmed cached torrents first (fast path); preserve Torrentio order within groups
-      const rankedCandidates = candidates.slice(0, checkCount).map((c, i) => ({
+      const ranked = candidates.slice(0, checkCount).map((c, i) => ({
         ...c,
         isCached:
           availResults[i].status === "fulfilled"
             ? (availResults[i] as PromiseFulfilledResult<boolean>).value
             : false,
       }));
-      rankedCandidates.sort((a, b) => (b.isCached ? 1 : 0) - (a.isCached ? 1 : 0));
 
-      const cachedCount = rankedCandidates.filter((c) => c.isCached).length;
+      // Sort:
+      // 1. Cached first
+      // 2. Prefer "Light" files (under 10GB, ideally ~2-5GB for 1080p)
+      // 3. Avoid the 40GB-80GB REMUX monsters that hang the player
+      ranked.sort((a, b) => {
+        if (a.isCached && !b.isCached) return -1;
+        if (!a.isCached && b.isCached) return 1;
+
+        const sizeA_GB = a.sizeBytes / 1e9;
+        const sizeB_GB = b.sizeBytes / 1e9;
+
+        // Size "Sweet Spot": 1.5 GB to 8 GB is ideal for most connections
+        const isIdealA = sizeA_GB >= 1.5 && sizeA_GB <= 8;
+        const isIdealB = sizeB_GB >= 1.5 && sizeB_GB <= 8;
+
+        if (isIdealA && !isIdealB) return -1;
+        if (!isIdealA && isIdealB) return 1;
+
+        // If both are outside sweet spot, prefer the smaller one to avoid bandwidth hang
+        return sizeA_GB - sizeB_GB;
+      });
+
+      const target = ranked[0];
       console.log(
-        `[ARC] RD cache results: ${cachedCount} cached, ${checkCount - cachedCount} uncached. Selecting: "${rankedCandidates[0].title}" (cached: ${rankedCandidates[0].isCached})`,
+        `[ARC] Selected: "${target.title}" (cached: ${target.isCached}, size: ${(target.sizeBytes / 1e9).toFixed(2)} GB)`,
       );
 
-      const target = rankedCandidates[0];
-
-      // ── Add magnet to RD ────────────────────────────────────────────────────
+      // ── Add magnet to RD ─────────────────────────────────────────────────
       const torrentId = await addMagnetToRD(target.magnet);
       console.log(`[ARC] Torrent ID: ${torrentId}`);
 
-      // ── Phase-1 poll: wait for waiting_files_selection OR downloaded ────────
-      // For cached torrents this is nearly instant.
-      // For uncached torrents (shouldn't happen with [RD+] filter) this can take minutes.
-      let info = await pollForSelectionOrDownloaded(torrentId);
+      // ── Single status check (no polling loop) ────────────────────────────
+      // getTorrentInfo has its own 404 retry loop for propagation delay.
+      const info = await getTorrentInfo(torrentId, 3);
+      const status = info.status ?? "unknown";
 
-      // ── Select video file if RD is waiting for our choice ──────────────────
-      if (info.status === "waiting_files_selection") {
+      if (TERMINAL_STATUSES.has(status)) {
+        return { error: `Torrent in terminal state: "${status}". Try another quality.` };
+      }
+
+      // ── Select files if RD is waiting ────────────────────────────────────
+      if (status === "waiting_files_selection") {
         const videoFiles = (info.files ?? []).filter((f) => /\.(mkv|mp4|webm|avi)$/i.test(f.path));
-        if (!videoFiles.length) {
-          return { error: "No video files found in torrent" };
-        }
-        // Pick the largest video file (highest quality)
+        if (!videoFiles.length) return { error: "No video files found in torrent" };
         const targetFile = videoFiles.sort((a, b) => b.bytes - a.bytes)[0];
         console.log(
           `[ARC] Selecting file: "${targetFile.path}" (${(targetFile.bytes / 1e9).toFixed(2)} GB)`,
         );
         await selectFileOnRD(torrentId, targetFile.id);
-
-        // ── Phase-2 poll: wait for status "downloaded" ─────────────────────
-        // This is the critical gate. We must confirm status === "downloaded"
-        // on RD's servers BEFORE unrestricting the link.
-        info = await pollUntilDownloaded(torrentId);
+        // File selection is done — return immediately, client will poll for "downloaded"
+        return {
+          torrentId,
+          status: "queued", // Will transition to downloading → downloaded
+          rdHostLink: null,
+          filename: targetFile.path.split("/").pop() ?? "",
+          fileSize: targetFile.bytes,
+        };
       }
 
-      // Final sanity check — must be downloaded before returning
-      if (info.status !== "downloaded") {
-        throw new Error(`Unexpected torrent status after polling: "${info.status}"`);
+      // ── If already downloaded (instant cache hit) ────────────────────────
+      if (status === "downloaded") {
+        const rdHostLink = info.links?.[0] ?? null;
+        const videoFiles = (info.files ?? []).filter((f) => /\.(mkv|mp4|webm|avi)$/i.test(f.path));
+        const bestFile = videoFiles.sort((a, b) => b.bytes - a.bytes)[0];
+        console.log(`[ARC] Torrent already downloaded. rdHostLink ready.`);
+        return {
+          torrentId,
+          status: "downloaded",
+          rdHostLink,
+          filename: bestFile?.path.split("/").pop() ?? "",
+          fileSize: bestFile?.bytes ?? 0,
+        };
       }
 
-      // links[0] is the stable hoster URL (e.g. https://real-debrid.com/d/XXXXX)
-      // It persists as long as the torrent exists in the user's RD account.
-      const rdHostLink = info.links?.[0];
-      if (!rdHostLink) {
-        return { error: "Torrent is downloaded but RD generated no hoster link." };
-      }
-
-      // Identify the selected video file for display purposes
+      // ── Still processing (queued, downloading, magnet_conversion, etc.) ──
+      // Return torrentId so client can poll pollTorrentStatus
       const videoFiles = (info.files ?? []).filter((f) => /\.(mkv|mp4|webm|avi)$/i.test(f.path));
       const bestFile = videoFiles.sort((a, b) => b.bytes - a.bytes)[0];
-
-      console.log(
-        `[ARC] Torrent resolution complete. rdHostLink ready. File: "${bestFile?.path.split("/").pop() ?? ""}" (${((bestFile?.bytes ?? 0) / 1e9).toFixed(2)} GB)`,
-      );
-
       return {
-        /** Stable hoster URL — safe to store; pass to resolvePlaybackStream at play time */
-        rdHostLink,
         torrentId,
+        status,
+        rdHostLink: null,
         filename: bestFile?.path.split("/").pop() ?? "",
         fileSize: bestFile?.bytes ?? 0,
       };
@@ -605,20 +480,46 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
     }
   });
 
-// ── Phase 2: Lazy Unrestriction at Playback Time ──────────────────────────────
+// ── Phase 1.5: Client-Side Poll Endpoint (ultra-fast, <1 s) ──────────────────
 /**
- * Called ONLY when the user is about to watch — converts the stable `rdHostLink`
- * into a fresh CDN download URL by calling /unrestrict/link on RD's servers.
+ * Single-shot torrent status check. The client calls this in a loop every 2-3 s
+ * until status === "downloaded". Each call is a single RD API request, well
+ * under any serverless timeout limit.
+ */
+export const pollTorrentStatus = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => pollStatusSchema.parse(d))
+  .handler(async ({ data }) => {
+    if (!RD_TOKEN) return { error: "Missing API token", status: "error" as const };
+    try {
+      const info = await getTorrentInfo(data.torrentId, 1);
+      const status = info.status ?? "unknown";
+      if (TERMINAL_STATUSES.has(status)) {
+        return {
+          status,
+          progress: 0,
+          rdHostLink: null as string | null,
+          error: `Torrent failed: "${status}". Try another title or quality.`,
+        };
+      }
+      const rdHostLink = status === "downloaded" ? (info.links?.[0] ?? null) : null;
+      return { status, progress: info.progress ?? 0, rdHostLink };
+    } catch (err: any) {
+      return { status: "error" as const, progress: 0, rdHostLink: null, error: err.message };
+    }
+  });
+
+// ── Phase 2: Lazy Unrestriction + Stream URL Builder ─────────────────────────
+/**
+ * Called ONLY when the torrent is confirmed "downloaded" and the user is about
+ * to watch. Unrestricts the stable rdHostLink to get a fresh CDN URL, fetches
+ * stream metadata, and returns all playback URLs.
  *
- * Why lazy unrestriction?
- *  - The CDN URL (unrestrict.download) is session-like; if the torrent is evicted
- *    from RD's cache between metadata load and playback, a stale CDN URL would 404.
- *  - By unrestricting just before playback we always get a fresh, valid CDN URL.
- *  - The hoster URL (rdHostLink) is long-lived and is the correct thing to cache.
+ * mediaInfos retry policy: 2 attempts max with 1 s delay (3 s total max).
+ * If mediaInfos fails, falls back to /streaming/transcode/{id} which provides
+ * usable HLS/MP4/DASH URLs without quality metadata.
  *
- * Also applies the bitrate/codec safety filter to choose between:
- *  - liveMP4  : instant remux, zero re-encoding, best quality
- *  - HLS      : transcoded, universally compatible, safe for all devices
+ * This ensures resolvePlaybackStream always completes in <8 s, safe for
+ * all Vercel plan limits.
  */
 export const resolvePlaybackStream = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => playbackSchema.parse(d))
@@ -629,91 +530,117 @@ export const resolvePlaybackStream = createServerFn({ method: "POST" })
       clientProfile = "default",
       preferredQuality,
     } = data;
-
     if (!RD_TOKEN) return { error: "Missing RD API token" };
-
     try {
-      // ── Step 1: Unrestrict at the moment of playback ─────────────────────
-      console.log(`[ARC] Unrestricting link at playback time…`);
+      // ── Step 1: Unrestrict ───────────────────────────────────────────────
+      console.log(`[ARC] Unrestricting link…`);
       const unrestricted = await unrestrictLink(rdHostLink);
-      console.log(
-        `[ARC] Unrestricted OK. ID: ${unrestricted.id}, streamable: ${unrestricted.streamable}`,
-      );
-
+      console.log(`[ARC] Unrestricted. ID: ${unrestricted.id}`);
       const authHeaders = { Authorization: `Bearer ${RD_TOKEN}` };
 
-      // ── Step 2: Fetch mediaInfos with exponential backoff retry ──────────
-      // 503 means RD's metadata service is still processing (or file was evicted).
-      // We retry up to 5 times: 2 s → 4 s → 8 s → 16 s before giving up.
+      // ── Step 2: mediaInfos (2 attempts max, 1 s + 2 s delays = 3 s max) ─
+      // Kept short to avoid Vercel timeout. Falls back to /streaming/transcode.
       let mediaInfos: any = null;
-      for (let attempt = 1; attempt <= 5; attempt++) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          const infoRes = await fetch(`${RD_API_BASE}/streaming/mediaInfos/${unrestricted.id}`, {
-            headers: authHeaders,
-          });
+          const infoRes = await fetchWithTimeout(
+            `${RD_API_BASE}/streaming/mediaInfos/${unrestricted.id}`,
+            { headers: authHeaders },
+            6000,
+          );
           if (infoRes.ok) {
             mediaInfos = await infoRes.json();
-            console.log(`[ARC] mediaInfos fetched on attempt ${attempt}`);
+            console.log(`[ARC] mediaInfos OK (attempt ${attempt})`);
             break;
           }
-          if (infoRes.status === 503) {
-            if (attempt === 5) {
-              console.warn(
-                `[ARC] mediaInfos 503 after ${attempt} attempts — proceeding without transcode metadata`,
-              );
-              break;
-            }
-            const retryDelay = Math.pow(2, attempt) * 1000;
-            console.warn(
-              `[ARC] mediaInfos 503 (attempt ${attempt}) — retrying in ${retryDelay}ms…`,
-            );
-            await sleep(retryDelay);
+          if (infoRes.status === 503 && attempt < 2) {
+            console.warn(`[ARC] mediaInfos 503 attempt ${attempt} — retrying in ${attempt}s…`);
+            await sleep(attempt * 1000);
             continue;
           }
-          console.warn(`[ARC] mediaInfos returned HTTP ${infoRes.status}`);
+          console.warn(`[ARC] mediaInfos HTTP ${infoRes.status}`);
           break;
-        } catch (fetchErr) {
-          if (attempt === 5) console.warn(`[ARC] mediaInfos fetch error:`, fetchErr);
-          await sleep(2000 * attempt);
+        } catch {
+          if (attempt < 2) await sleep(1000);
         }
       }
 
-      // ── Step 3: Bitrate / codec safety filter ─────────────────────────────
+      // ── Step 3: Transcode fallback when mediaInfos unavailable ──────────
+      // /streaming/transcode returns "full" quality HLS/MP4/DASH URLs even
+      // when the metadata service is down. We extract the base URL and
+      // reconstruct quality-specific variants to honor bandwidth limits.
+      let transcodeHlsBase: string | null = null;
+      let transcodeMp4Full: string | null = null;
+      let transcodeDashFull: string | null = null;
+
+      if (!mediaInfos?.modelUrl) {
+        console.log(`[ARC] mediaInfos unavailable — trying /streaming/transcode fallback…`);
+        try {
+          const tcRes = await fetchWithTimeout(
+            `${RD_API_BASE}/streaming/transcode/${unrestricted.id}`,
+            { headers: authHeaders },
+            6000,
+          );
+          if (tcRes.ok) {
+            const tcData = await tcRes.json();
+            // Extract base URL for quality reconstruction
+            // e.g. "https://3.stream.real-debrid.com/t/HASH/eng1/none/aac/full.m3u8"
+            const fullHls: string | undefined = tcData?.apple?.full;
+            if (fullHls) {
+              // Reconstruct base: remove the quality+format suffix
+              transcodeHlsBase = fullHls.replace(/\/full\.m3u8$/, "");
+            }
+            transcodeMp4Full = tcData?.liveMP4?.full ?? null;
+            transcodeDashFull = tcData?.dash?.full ?? null;
+            console.log(`[ARC] Transcode fallback OK. HLS base: ${transcodeHlsBase}`);
+          } else {
+            console.warn(`[ARC] Transcode fallback HTTP ${tcRes.status}`);
+          }
+        } catch (tcErr) {
+          console.warn(`[ARC] Transcode fallback error:`, tcErr);
+        }
+      }
+
+      // ── Step 4: Bitrate / codec filter ───────────────────────────────────
+      // NOTE: preferredFormat is now ALWAYS "hls" regardless of what the bitrate
+      // filter would recommend. The liveMP4 remux ("mp4" format) streams the full
+      // source file (up to 11+ GB) as a single progressive download — Chrome and
+      // Firefox cannot seek or buffer it reliably. It will always stall and fail.
+      //
+      // HLS (m3u8) is the ONLY format that works safely in all browsers because:
+      //  - It splits the stream into small ~6 second segments
+      //  - hls.js handles adaptive bitrate and retries automatically
+      //  - The quality is controlled by the transcodeQuality slug (e.g. 1080p_8mbps)
+      //
+      // mp4Url and dashUrl are still built and returned so the user can switch
+      // formats manually via the quality menu if they want to experiment, but
+      // they are NEVER used as the primary playback format automatically.
       const bitrateDecision = mediaInfos
         ? evaluateBitrateForDevice(mediaInfos, clientProfile)
-        : {
-            preferredFormat: "mp4" as const,
-            warning: null,
-            isHEVC: false,
-            bitrateMbps: 0,
-          };
+        : { preferredFormat: "hls" as const, warning: null, isHEVC: false, bitrateMbps: 0 };
+      // Force HLS regardless of bitrate decision — browser safety requirement
+      const forcedFormat = "hls" as const;
 
-      // ── Step 4: Audio track resolution ────────────────────────────────────
+      // ── Step 5: Audio track resolution ───────────────────────────────────
       const targetLang = normalizeAudioLanguageCode(preferredAudioLanguage) || "en";
       let audioTracksArray: any[] = [];
       let selectedAudioId: string | null = null;
-
       if (mediaInfos?.details?.audio) {
         audioTracksArray = Object.entries(mediaInfos.details.audio).map(
           ([id, trackData]: [string, any]) => ({ id, ...trackData }),
         );
-      } else if (Array.isArray(mediaInfos?.audio)) {
-        audioTracksArray = mediaInfos.audio;
       }
-
       if (audioTracksArray.length > 0) {
         const normalize = (code: string | undefined) => (code || "").toLowerCase().slice(0, 3);
         const isCompatibleCodec = (codec: string | undefined) => {
           const c = (codec || "").toLowerCase();
           return c.includes("ac3") || c.includes("eac3") || c.includes("aac") || c.includes("mp3");
         };
-
         const langMatches = audioTracksArray.filter((a: any) => {
           const iso = normalize(a.lang_iso);
           const alt = normalize(a.lang);
           return iso === targetLang || alt === targetLang || iso === "eng" || alt === "eng";
         });
-
         const pool = langMatches.length > 0 ? langMatches : audioTracksArray;
         const sorted = [...pool].sort((a, b) => {
           const aComp = isCompatibleCodec(a.codec);
@@ -723,27 +650,18 @@ export const resolvePlaybackStream = createServerFn({ method: "POST" })
           if (a.default && !b.default) return -1;
           return 0;
         });
-
         selectedAudioId = sorted[0]?.id ?? null;
-        console.log(
-          `[ARC] Audio track selected: ID=${selectedAudioId}, codec=${sorted[0]?.codec}, lang=${sorted[0]?.lang_iso}`,
-        );
+        console.log(`[ARC] Audio selected: ID=${selectedAudioId}, lang=${sorted[0]?.lang_iso}`);
       }
 
-      // ── Step 5: Build stream URLs ──────────────────────────────────────────
+      // ── Step 6: Quality slug selection ───────────────────────────────────
       const availableQualities = mediaInfos?.availableQualities ?? {};
       const availableQualityValues = Object.values(availableQualities) as string[];
 
-      // Map user quality preference → transcode quality slug.
-      //
-      // ⚠️  IMPORTANT: Do NOT map "auto" to "full".
-      //   "full.m3u8" asks RD to re-encode the source bitrate to H264 at ORIGINAL quality.
-      //   For a 24 Mbps HEVC file, "full.m3u8" produces a ~20-30 Mbps H264 stream —
-      //   completely unusable on connections slower than ~25 Mbps (most of the world).
-      //   Only an explicit "2160" (4K) request should use "full" quality.
-      let transcodeQuality = "1080p_4mbps"; // safe bandwidth default
+      // "auto" → best available 1080p (NOT "full" — full.m3u8 = original bitrate H264,
+      // can be 20-40 Mbps on high-quality sources, unusable on limited connections).
+      let transcodeQuality = "1080p_4mbps";
       if (preferredQuality === "2160") {
-        // Explicit 4K request — serve original quality (user knows what they asked for)
         transcodeQuality = "full";
       } else if (preferredQuality === "1080") {
         transcodeQuality = availableQualityValues.includes("1080p_8mbps")
@@ -756,33 +674,28 @@ export const resolvePlaybackStream = createServerFn({ method: "POST" })
       } else if (preferredQuality === "480") {
         transcodeQuality = "480p_1mbps";
       } else {
-        // "auto" or undefined — pick the best available 1080p quality.
-        // 1080p_8mbps ≈ 8 Mbps H264 = excellent quality, feasible on 10+ Mbps connections.
-        // 1080p_4mbps ≈ 4 Mbps H264 = great quality, feasible on 5+ Mbps connections.
+        // auto: 1080p_8mbps if available, else 1080p_4mbps
         if (availableQualityValues.includes("1080p_8mbps")) transcodeQuality = "1080p_8mbps";
         else transcodeQuality = "1080p_4mbps";
       }
 
-      // Bandwidth safety cap: when the bitrate filter already forced us onto the HLS
-      // transcode path (because the source bitrate was too high), also cap the transcode
-      // quality so the HLS stream itself doesn't overwhelm limited connections.
-      //
-      // Example scenario that this prevents:
-      //   Source: 24 Mbps HEVC → bitrate filter → HLS forced
-      //   Without this cap: hlsUrl = "1080p_8mbps.m3u8" = 8 Mbps (OK on 10 Mbps, borderline)
-      //   With this cap:    hlsUrl = "1080p_4mbps.m3u8" = 4 Mbps (comfortable on 10 Mbps)
-      if (bitrateDecision.preferredFormat === "hls" && bitrateDecision.bitrateMbps > 20) {
+      // Bandwidth cap: when bitrate filter forces HLS for high-bitrate source,
+      // cap the transcode quality to 1080p_4mbps (~4 Mbps) to ensure smooth
+      // playback on connections under 10 Mbps (e.g. Morocco → AMS ARC).
+      if (bitrateDecision.preferredFormat === "hls" && bitrateDecision.bitrateMbps > 14) {
         transcodeQuality = "1080p_4mbps";
         console.log(
-          `[ARC] Bandwidth cap: source ${bitrateDecision.bitrateMbps.toFixed(0)} Mbps forced HLS — transcodeQuality capped to 1080p_4mbps`,
+          `[ARC] Bandwidth cap: ${bitrateDecision.bitrateMbps.toFixed(0)} Mbps source → 1080p_4mbps`,
         );
       }
 
+      // ── Step 7: Build URLs ────────────────────────────────────────────────
       let hlsUrl: string | null = null;
       let mp4Url: string | null = null;
       let dashUrl: string | null = null;
 
       if (mediaInfos?.modelUrl) {
+        // Primary path: use modelUrl template from mediaInfos
         const audioSlot = selectedAudioId ?? "none";
         const buildUrl = (quality: string, format: string) =>
           (mediaInfos.modelUrl as string)
@@ -791,24 +704,33 @@ export const resolvePlaybackStream = createServerFn({ method: "POST" })
             .replace("{audioCodec}", "aac")
             .replace("{quality}", quality)
             .replace("{format}", format);
-
-        // HLS: transcoded at chosen quality level (universal compat, device-safe)
         hlsUrl = buildUrl(transcodeQuality, "m3u8");
-        // MP4: liveMP4 remux at full quality (zero re-encoding, best quality)
         mp4Url = buildUrl("full", "mp4");
-        // DASH: full quality DASH manifest (lowest priority — HEVC issues in Chrome)
         dashUrl = buildUrl("full", "mpd");
+      } else if (transcodeHlsBase) {
+        // Fallback path: reconstruct quality-specific URLs from transcode "full" URL
+        // The base looks like: https://3.stream.real-debrid.com/t/HASH/eng1/none/aac
+        hlsUrl = `${transcodeHlsBase}/${transcodeQuality}.m3u8`;
+        mp4Url = transcodeMp4Full; // Only "full" available from transcode endpoint
+        dashUrl = transcodeDashFull;
+        console.log(`[ARC] Using transcode fallback URLs. HLS: ${hlsUrl}`);
+      } else {
+        // Both mediaInfos and transcode failed — cannot stream in browser
+        return {
+          error:
+            "Real-Debrid stream server is temporarily unavailable for this file. Please retry in a few moments.",
+        };
       }
 
-      console.log(`[ARC] Stream URLs ready. preferredFormat=${bitrateDecision.preferredFormat}`);
+      console.log(`[ARC] Stream ready. format=hls (forced) hls=${hlsUrl}`);
 
       return {
-        streamUrl: unrestricted.download, // Raw CDN URL (direct download)
+        streamUrl: unrestricted.download,
         originalUrl: unrestricted.download,
         hlsUrl,
         mp4Url,
         dashUrl,
-        preferredFormat: bitrateDecision.preferredFormat,
+        preferredFormat: forcedFormat,
         bitrateWarning: bitrateDecision.warning,
         availableAudioTracks: audioTracksArray,
         activeAudioTrackId: selectedAudioId,

@@ -1,4 +1,12 @@
 {
+  "functions": {
+    "api/**": {
+      "maxDuration": 60
+    },
+    "**/*.server.*": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     {
       "source": "/mfproxy/:path*",
