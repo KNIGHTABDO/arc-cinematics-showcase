@@ -391,7 +391,9 @@ function WatchPage() {
     }
   }, [streamUrls]);
 
-  // Attach stream source and use hls.js for desktop playback when only HLS is available.
+  // Attach stream source and handle format fallback.
+  // Strategy: Try MP4 first (instant remux, fastest). If browser can't decode it
+  // (e.g. HEVC not supported), automatically fall back to HLS (transcoded, universal).
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -415,13 +417,39 @@ function WatchPage() {
       typeof video.canPlayType === "function" &&
       video.canPlayType("application/vnd.apple.mpegurl") !== "";
 
-    if (!isHls || canPlayNativeHls) {
+    let disposed = false;
+
+    // For non-HLS URLs (MP4/MPD), set src directly and listen for errors
+    if (!isHls) {
+      video.src = streamUrl;
+      video.load();
+      
+      // Auto-fallback: if MP4 fails (codec not supported), switch to HLS
+      const onError = () => {
+        if (disposed) return;
+        console.warn("[ARC] MP4 playback failed, falling back to HLS transcode...");
+        const fallback = streamUrls?.hlsUrl;
+        if (fallback && fallback !== streamUrl) {
+          setStreamUrl(fallback);
+          setSelectedFormat("hls");
+        } else if (!switchToNextStream()) {
+          setError("Playback failed for this stream.");
+        }
+      };
+      video.addEventListener("error", onError, { once: true });
+      
+      return () => {
+        disposed = true;
+        video.removeEventListener("error", onError);
+      };
+    }
+
+    // For HLS URLs: use native HLS (Safari) or hls.js
+    if (canPlayNativeHls) {
       video.src = streamUrl;
       video.load();
       return;
     }
-
-    let disposed = false;
 
     void import("hls.js")
       .then((mod) => {
@@ -477,7 +505,7 @@ function WatchPage() {
         hlsRef.current = null;
       }
     };
-  }, [streamUrl, switchToNextStream]);
+  }, [streamUrl, switchToNextStream, streamUrls]);
 
   const refreshAudioTracks = useCallback(() => {
     const v = videoRef.current as (HTMLVideoElement & { audioTracks?: any }) | null;

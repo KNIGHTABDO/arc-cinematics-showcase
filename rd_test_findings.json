@@ -1,0 +1,106 @@
+{
+  "unrestricted": {
+    "id": "JUFYK4YB2P2WE",
+    "filename": "Project.Hail.Mary.2026.2160p.WEBrip.h265.Dual YG.mkv",
+    "mimeType": "video/x-matroska",
+    "filesize": 11482117207,
+    "link": "https://real-debrid.com/d/C7CWYGRAFDOWOCFE",
+    "host": "real-debrid.com",
+    "host_icon": "https://fcdn.real-debrid.com/0831/images/hosters/realdebrid.png",
+    "chunks": 32,
+    "crc": 1,
+    "download": "https://43-4.download.real-debrid.com/d/JUFYK4YB2P2WE/Project.Hail.Mary.2026.2160p.WEBrip.h265.Dual%20YG.mkv",
+    "streamable": 1
+  },
+  "mediaInfos": {
+    "filename": "Project Hail Mary",
+    "hoster": "rd",
+    "link": "https://real-debrid.com/d/C7CWYGRAFDOWOCFE",
+    "type": "movie",
+    "season": null,
+    "episode": null,
+    "year": 2026,
+    "duration": 9391.8,
+    "bitrate": 9780546,
+    "size": 11482117207,
+    "details": {
+      "video": {
+        "eng1": {
+          "stream": "0:0",
+          "lang": "English",
+          "lang_iso": "eng",
+          "codec": "hevc",
+          "colorspace": "yuv420p10le",
+          "width": 3840,
+          "height": 2072
+        }
+      },
+      "audio": {
+        "spa1": {
+          "stream": "0:1",
+          "lang": "Spanish",
+          "lang_iso": "spa",
+          "codec": "eac3",
+          "sampling": 48000,
+          "channels": 6
+        },
+        "eng1": {
+          "stream": "0:2",
+          "lang": "English",
+          "lang_iso": "eng",
+          "codec": "eac3",
+          "sampling": 48000,
+          "channels": 6
+        }
+      },
+      "subtitles": {
+        "spa1": {
+          "stream": "0:3",
+          "lang": "Spanish",
+          "lang_iso": "spa",
+          "type": "SRT"
+        },
+        "eng1": {
+          "stream": "0:4",
+          "lang": "English",
+          "lang_iso": "eng",
+          "type": "SRT"
+        }
+      }
+    },
+    "poster_path": "https://image.tmdb.org/t/p/w185/yihdXomYb5kTeSivtFndMy5iDmf.jpg",
+    "backdrop_path": "https://image.tmdb.org/t/p/w1280/8Tfys3mDZVp4tNoH2ktm06a0Tau.jpg",
+    "baseUrl": "https://3.stream.real-debrid.com/t/JUFYK4YB2P2WE43/eng1/none/aac/full",
+    "availableFormats": {
+      "apple": "m3u8",
+      "dash": "mpd",
+      "liveMP4": "mp4",
+      "h264WebM": "webm"
+    },
+    "availableQualities": {
+      "Original": "full",
+      "1080P High": "1080p_8mbps",
+      "1080P": "1080p_4mbps",
+      "720P High": "720p_4mbps",
+      "720P": "720p_2mbps",
+      "480P High": "480p_2mbps",
+      "480P": "480p_1mbps"
+    },
+    "modelUrl": "https://3.stream.real-debrid.com/t/JUFYK4YB2P2WE43/{audio}/{subtitles}/{audioCodec}/{quality}.{format}",
+    "host": "3.stream.real-debrid.com"
+  },
+  "transcode": {
+    "apple": {
+      "full": "https://3.stream.real-debrid.com/t/JUFYK4YB2P2WE43/eng1/none/aac/full.m3u8"
+    },
+    "dash": {
+      "full": "https://3.stream.real-debrid.com/t/JUFYK4YB2P2WE43/eng1/none/aac/full.mpd"
+    },
+    "liveMP4": {
+      "full": "https://3.stream.real-debrid.com/t/JUFYK4YB2P2WE43/eng1/none/aac/full.mp4"
+    },
+    "h264WebM": {
+      "full": "https://3.stream.real-debrid.com/t/JUFYK4YB2P2WE43/eng1/none/aac/full.webm"
+    }
+  }
+}

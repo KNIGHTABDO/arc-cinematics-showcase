@@ -184,6 +184,17 @@ async function addMagnetToRD(magnet: string): Promise<string> {
     body: form.toString(),
   });
 
+  // 409 = torrent already exists in RD cache; body contains the existing torrent id
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as any;
+    const existingId = body?.id || body?.error_code;
+    if (typeof existingId === "string" && existingId.length > 0) {
+      console.log(`[ARC] RD 409 – reusing existing torrent id: ${existingId}`);
+      return existingId;
+    }
+    throw new Error(`RD addMagnet 409 – could not extract existing torrent id`);
+  }
+
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as any;
     throw new Error(`Failed to add magnet: ${err.error || res.status}`);
@@ -194,14 +205,23 @@ async function addMagnetToRD(magnet: string): Promise<string> {
   return data.id as string;
 }
 
-async function getTorrentInfo(torrentId: string): Promise<RDTorrentInfo> {
-  const res = await rdRequest(`/torrents/info/${torrentId}`);
+async function getTorrentInfo(torrentId: string, retries = 4): Promise<RDTorrentInfo> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await rdRequest(`/torrents/info/${torrentId}`);
 
-  if (!res.ok) {
+    if (res.ok) return await res.json();
+
+    // 404 immediately after addMagnet is a transient propagation delay — retry
+    if (res.status === 404 && attempt < retries) {
+      const backoffMs = (attempt + 1) * 1000;
+      console.warn(`[ARC] torrents/info 404 (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoffMs}ms…`);
+      await sleep(backoffMs);
+      continue;
+    }
+
     throw new Error(`RD torrents/info failed with ${res.status}`);
   }
-
-  return await res.json();
+  throw new Error(`RD torrents/info failed after ${retries + 1} attempts`);
 }
 
 async function selectFileOnRD(torrentId: string, fileId: number): Promise<void> {
@@ -363,52 +383,59 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         console.log(`[ARC] Selected audio track ID: ${selectedAudioId} (target: ${targetLang}, found exact: ${!!exactMatch}, engFallback: ${!!engFallback})`);
       }
 
-      // Step C: Match Requested Quality
-      const availableVals = Object.values(mediaInfos.availableQualities || {}) as string[];
-      let qualityValue = availableVals.includes("full") ? "full" : availableVals[0] || "full";
-      
-      if (preferredQuality && preferredQuality !== "auto") {
-        const qualityMap: Record<string, string[]> = {
-          "2160": ["2160p_16mbps", "2160P", "2160p", "full"],
-          "1080": ["1080p_8mbps", "1080p_4mbps", "1080P", "1080p"],
-          "720": ["720p_4mbps", "720p_2mbps", "720P", "720p"],
-          "480": ["480p_2mbps", "480p_1mbps", "480P", "480p"]
-        };
-        const targets = qualityMap[preferredQuality] || [];
-        for (const t of targets) {
-           if (availableVals.includes(t)) {
-              qualityValue = t;
-              break;
-           }
-        }
-      }
-      
-      console.log(`[ARC] Selected quality value: ${qualityValue} (from preferred: ${preferredQuality})`);
-
-      // Step D: Construct Stream URL using liveMP4 (mp4 format)
+      // Step C: Construct stream URLs using modelUrl template
+      // Strategy: FASTEST FIRST
+      // 1. Primary: liveMP4 at 'full' quality = instant remux (MKV→MP4, no re-encoding)
+      // 2. Fallback: HLS at 1080p = transcoded but guaranteed browser compatibility
       if (!mediaInfos.modelUrl) {
          throw new Error("No modelUrl provided by Real-Debrid for this content.");
       }
 
-      // Use liveMP4 (format=mp4) instead of DASH.
-      // This forces the browser to stream it via the native HTML5 <video> tag, bypassing download prompts
-      // and avoiding DASH MSE codec restrictions.
-      const streamUrl = mediaInfos.modelUrl
-         .replace('{audio}', selectedAudioId || 'none')
-         .replace('{subtitles}', 'none')
-         .replace('{audioCodec}', 'aac')
-         .replace('{quality}', qualityValue)
-         .replace('{format}', 'mp4');
+      const audioSlot = selectedAudioId || 'none';
+      const availableQualities = mediaInfos.availableQualities || {};
+      
+      // Detect source codec info for logging
+      const videoDetails = mediaInfos.details?.video || {};
+      const firstVideoTrack = Object.values(videoDetails)[0] as any;
+      const isHEVC = firstVideoTrack?.codec === 'hevc' || firstVideoTrack?.codec === 'h265';
+      
+      console.log(`[ARC] Source codec: ${firstVideoTrack?.codec}, Resolution: ${firstVideoTrack?.width}x${firstVideoTrack?.height}, HEVC: ${isHEVC}`);
 
-      console.log(`[ARC] Final Constructed MP4 URL (LiveMP4): ${streamUrl}`);
+      // Build URL helper
+      const buildUrl = (quality: string, format: string) => mediaInfos.modelUrl
+        .replace('{audio}', audioSlot)
+        .replace('{subtitles}', 'none')
+        .replace('{audioCodec}', 'aac')
+        .replace('{quality}', quality)
+        .replace('{format}', format);
+
+      // PRIMARY: full quality MP4 (instant remux, zero transcoding, best quality)
+      const mp4Url = buildUrl('full', 'mp4');
+      
+      // FALLBACK: HLS at 1080p (transcoded but universally compatible)
+      const availableQualityValues = Object.values(availableQualities) as string[];
+      let fallbackQuality = '1080p_4mbps';
+      if (availableQualityValues.includes('1080p_8mbps')) fallbackQuality = '1080p_8mbps';
+      
+      const hlsFallbackUrl = buildUrl(fallbackQuality, 'm3u8');
+      
+      // Also provide dash URL for reference
+      const dashUrl = buildUrl('full', 'mpd');
+
+      console.log(`[ARC] Primary (instant remux): ${mp4Url}`);
+      console.log(`[ARC] Fallback (HLS ${fallbackQuality}): ${hlsFallbackUrl}`);
 
       return {
-        streamUrl,
-        mp4Url: streamUrl,
+        streamUrl: mp4Url, // Start with fastest option
+        dashUrl,
+        hlsUrl: hlsFallbackUrl, // HLS fallback if MP4/HEVC fails
+        mp4Url,
+        hlsFallbackUrl,
         preferredFormat: "mp4",
         availableAudioTracks: audioTracksArray,
         activeAudioTrackId: selectedAudioId,
         filename: targetFile.path.split('/').pop() || "",
+        availableQualities: Object.entries(availableQualities).map(([label, value]) => ({ label, value: value as string })),
       };
 
     } catch (err: any) {
