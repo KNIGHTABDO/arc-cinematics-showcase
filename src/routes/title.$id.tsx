@@ -69,7 +69,7 @@ function TitlePage() {
       .select("id")
       .eq("profile_id", profileId)
       .eq("imdb_id", movie.id.toString())
-      .single()
+      .maybeSingle()
       .then(({ data }) => {
         if (data) setIsFavorite(true);
       });

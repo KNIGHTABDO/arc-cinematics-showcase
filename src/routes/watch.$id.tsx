@@ -6,26 +6,32 @@ const TIME_REGEX = /(\d{2}):(\d{2}):(\d{2})\.(\d{3})/g;
 
 const shiftVttTime = (vttText: string, offsetSeconds: number): string => {
   if (!vttText || offsetSeconds === 0) return vttText;
-  
+
   return vttText.replace(TIME_REGEX, (match, hours, minutes, seconds, milliseconds) => {
-    const totalMs = 
-      parseInt(hours, 10) * 3600000 + 
-      parseInt(minutes, 10) * 60000 + 
-      parseInt(seconds, 10) * 1000 + 
+    const totalMs =
+      parseInt(hours, 10) * 3600000 +
+      parseInt(minutes, 10) * 60000 +
+      parseInt(seconds, 10) * 1000 +
       parseInt(milliseconds, 10);
-      
-    const newTotalMs = Math.max(0, totalMs + (offsetSeconds * 1000));
-    
-    const newH = Math.floor(newTotalMs / 3600000).toString().padStart(2, '0');
-    const newM = Math.floor((newTotalMs % 3600000) / 60000).toString().padStart(2, '0');
-    const newS = Math.floor((newTotalMs % 60000) / 1000).toString().padStart(2, '0');
-    const newMs = (newTotalMs % 1000).toString().padStart(3, '0');
-    
+
+    const newTotalMs = Math.max(0, totalMs + offsetSeconds * 1000);
+
+    const newH = Math.floor(newTotalMs / 3600000)
+      .toString()
+      .padStart(2, "0");
+    const newM = Math.floor((newTotalMs % 3600000) / 60000)
+      .toString()
+      .padStart(2, "0");
+    const newS = Math.floor((newTotalMs % 60000) / 1000)
+      .toString()
+      .padStart(2, "0");
+    const newMs = (newTotalMs % 1000).toString().padStart(3, "0");
+
     return `${newH}:${newM}:${newS}.${newMs}`;
   });
 };
 import { supabase } from "@/lib/supabase";
-import { getStreamForMovie } from "@/lib/server/streams";
+import { getStreamForMovie, resolvePlaybackStream } from "@/lib/server/streams";
 import { getSubtitlesForMedia, getSubtitleVtt } from "@/lib/server/subtitles";
 import { getMovieDetails, getTVDetails } from "@/lib/server/tmdb";
 import { useSettings } from "@/lib/store/settings";
@@ -74,15 +80,23 @@ function WatchPage() {
   const progressInterval = useRef<ReturnType<typeof setInterval>>(undefined);
   const stallTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const rebufferTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const hlsRef = useRef<any>(null);
+
   const hasUserSelectedAudioTrack = useRef(false);
 
   const parsed = parseWatchId(id);
 
-  const [streamUrls, setStreamUrls] = useState<{dashUrl: string|null, hlsUrl: string|null, mp4Url: string|null}>({dashUrl: null, hlsUrl: null, mp4Url: null});
-  const [preferredFormat, setPreferredFormat] = useState<"dash"|"hls"|"mp4">("hls");
+  const [streamUrls, setStreamUrls] = useState<{
+    dashUrl: string | null;
+    hlsUrl: string | null;
+    mp4Url: string | null;
+    originalUrl: string | null;
+  }>({ dashUrl: null, hlsUrl: null, mp4Url: null, originalUrl: null });
+  const [preferredFormat, setPreferredFormat] = useState<"dash" | "hls" | "mp4">("hls");
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [streamFilename, setStreamFilename] = useState<string>("");
+  /** Stable RD hoster URL returned by getStreamForMovie. Used for retry without re-polling. */
+  const [rdHostLink, setRdHostLink] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [backupStreams, setBackupStreams] = useState<string[]>([]);
   const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
   const [quality, setQuality] = useState<"auto" | "2160" | "1080" | "720" | "480">("auto");
@@ -110,7 +124,7 @@ function WatchPage() {
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
   const [showFormatMenu, setShowFormatMenu] = useState(false);
-  const [selectedFormat, setSelectedFormat] = useState<"dash"|"hls"|"mp4">("hls");
+  const [selectedFormat, setSelectedFormat] = useState<"dash" | "hls" | "mp4" | "original">("hls");
   const [savedProgress, setSavedProgress] = useState<number | null>(null);
   const [hasRestoredProgress, setHasRestoredProgress] = useState(false);
   const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
@@ -118,6 +132,10 @@ function WatchPage() {
   const [originalAudioLanguage, setOriginalAudioLanguage] = useState<string>("");
   const [hoverPosition, setHoverPosition] = useState<number | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
+  /** Granular status text shown in the loading overlay during stream resolution */
+  const [streamLoadStatus, setStreamLoadStatus] = useState<string>("Locating stream…");
+  /** Set when the bitrate filter auto-downgraded the format to prevent device crashes */
+  const [bitrateWarning, setBitrateWarning] = useState<string | null>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
 
   const { lang, profile } = useSettings();
@@ -179,50 +197,87 @@ function WatchPage() {
             ? "ios_safari"
             : "default";
 
+        // ── Phase 1: Torrent resolution ──────────────────────────────────────────
+        // Finds the torrent via Torrentio, adds to RD, then polls RD's servers
+        // (GET /torrents/info) until status === "downloaded". No unrestriction yet.
+        setBitrateWarning(null);
+        setStreamLoadStatus("Locating stream on Real-Debrid…");
+
         const resolveRequest = getStreamForMovie({
           data: {
             watchId: id,
             preferredQuality: quality,
             clientProfile,
-            preferredAudioLanguage: preferredAudioLanguage.slice(0, 2) || undefined,
           },
         });
 
         let resolverTimeout: ReturnType<typeof setTimeout> | undefined;
-        const timeoutRequest = new Promise((_, reject) => {
+        const timeoutRequest = new Promise<never>((_, reject) => {
           resolverTimeout = setTimeout(() => {
-            reject(
-              new Error(
-                "Stream lookup took too long. Please retry; resolver has moved to another source.",
-              ),
-            );
-          }, 45000);
+            reject(new Error("Stream lookup took too long. Please retry."));
+          }, 60000);
         });
 
-        let res: any;
+        let torrentRes: any;
         try {
-          res = await Promise.race([resolveRequest, timeoutRequest]);
+          torrentRes = await Promise.race([resolveRequest, timeoutRequest]);
         } finally {
           if (resolverTimeout) clearTimeout(resolverTimeout);
         }
         if (cancelled) return;
 
-        if (res.error || res.errorCode) {
-          if (res.errorCode === "IOS_NO_ACCEPTABLE_QUALITY") {
-            throw new Error(
-              "No acceptable iOS-quality stream found for this title. Try another quality level or title."
-            );
-          }
-          const code = res.errorCode ? `[${res.errorCode}] ` : "";
-          throw new Error(`${code}${res.error || "Failed to locate stream."}`);
+        if (torrentRes.error) {
+          throw new Error(torrentRes.error);
+        }
+        if (!torrentRes.rdHostLink) {
+          throw new Error("Resolver returned no stream link.");
         }
 
-        if (res.streamUrl || res.dashUrl || res.hlsUrl || res.mp4Url) {
-          setStreamUrls({ dashUrl: res.dashUrl, hlsUrl: res.hlsUrl, mp4Url: res.mp4Url });
-          setPreferredFormat(res.preferredFormat || "hls");
-          setStreamUrl(res.streamUrl || res.hlsUrl || res.mp4Url || res.dashUrl);
-          setStreamFilename(res.filename || "");
-          setBackupStreams(Array.isArray(res.backupStreams) ? res.backupStreams : []);
+        // Store the stable hoster URL so retryPlayback() can re-unrestrict without re-polling
+        setRdHostLink(torrentRes.rdHostLink);
+
+        // ── Phase 2: Lazy unrestriction at playback time ──────────────────────────
+        // The rdHostLink (hoster URL) is stable and long-lived. We call
+        // /unrestrict/link HERE — only at the moment the user is about to watch —
+        // so the CDN download URL is always fresh and never stale.
+        // The bitrate/codec filter also runs here to pick the safest format.
+        setStreamLoadStatus("Preparing playback link…");
+
+        const playbackRes = await resolvePlaybackStream({
+          data: {
+            rdHostLink: torrentRes.rdHostLink,
+            clientProfile,
+            preferredAudioLanguage: preferredAudioLanguage.slice(0, 2) || undefined,
+            preferredQuality: quality,
+          },
+        });
+        if (cancelled) return;
+
+        if (playbackRes.error) {
+          throw new Error(playbackRes.error);
+        }
+
+        if (playbackRes.streamUrl || playbackRes.hlsUrl || playbackRes.mp4Url) {
+          setStreamUrls({
+            dashUrl: playbackRes.dashUrl ?? null,
+            hlsUrl: playbackRes.hlsUrl ?? null,
+            mp4Url: playbackRes.mp4Url ?? null,
+            originalUrl: playbackRes.originalUrl ?? null,
+          });
+          setPreferredFormat(playbackRes.preferredFormat || "hls");
+
+          // Set streamUrl to the format-appropriate primary URL so that:
+          //  - The loading state exits (streamUrl !== null)
+          //  - The format-aware HLS detection in the player useEffect works correctly
+          const primaryUrl =
+            playbackRes.preferredFormat === "hls"
+              ? playbackRes.hlsUrl || playbackRes.streamUrl
+              : playbackRes.mp4Url || playbackRes.streamUrl;
+          setStreamUrl(primaryUrl ?? null);
+
+          setStreamFilename(playbackRes.filename || torrentRes.filename || "");
+          setBitrateWarning(playbackRes.bitrateWarning ?? null);
+          setBackupStreams([]);
           setCurrentStreamIndex(0);
           setStreamReady(false);
           setAudioTracks([]);
@@ -232,7 +287,7 @@ function WatchPage() {
           return;
         }
 
-        throw new Error("Resolver returned no stream URL.");
+        throw new Error("Playback stream unavailable for this title.");
       } catch (err: any) {
         if (!cancelled) {
           setError(err?.message || "Failed to locate stream.");
@@ -322,7 +377,15 @@ function WatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, parsed.type, parsed.tmdbId, parsed.season, parsed.episode, profile?.subtitle_language, streamFilename]);
+  }, [
+    id,
+    parsed.type,
+    parsed.tmdbId,
+    parsed.season,
+    parsed.episode,
+    profile?.subtitle_language,
+    streamFilename,
+  ]);
 
   // Convert selected subtitle to VTT object URL for <track>
   useEffect(() => {
@@ -353,12 +416,31 @@ function WatchPage() {
     };
 
     void loadVtt();
-
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [activeSub, offsetMs]);
+
+  const switchFormat = useCallback(
+    (format: "dash" | "hls" | "mp4" | "original") => {
+      const url = streamUrls[`${format}Url`];
+      if (!url) return;
+
+      console.log(`[ARC] Switching to format: ${format}`);
+      setSelectedFormat(format);
+      setStreamUrl(url);
+      setStreamReady(false);
+      setBuffering(true);
+      setHasRestoredProgress(false);
+
+      const v = videoRef.current;
+      if (v) {
+        v.load();
+      }
+    },
+    [streamUrls],
+  );
 
   const switchToNextStream = useCallback(() => {
     const next = backupStreams[currentStreamIndex];
@@ -374,138 +456,65 @@ function WatchPage() {
     return true;
   }, [backupStreams, currentStreamIndex]);
 
-  const switchFormat = useCallback((format: "dash" | "hls" | "mp4") => {
-    const url = streamUrls[`${format}Url`];
-    if (!url) return;
-    
-    console.log(`[ARC] Switching to format: ${format}`);
-    setSelectedFormat(format);
-    setStreamUrl(url);
-    setStreamReady(false);
-    setBuffering(true);
-    setHasRestoredProgress(false);
-    
-    const v = videoRef.current;
-    if (v) {
-      v.load();
-    }
-  }, [streamUrls]);
-
-  // Attach stream source and handle format fallback.
-  // Strategy: Try MP4 first (instant remux, fastest). If browser can't decode it
-  // (e.g. HEVC not supported), automatically fall back to HLS (transcoded, universal).
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (hlsRef.current) {
-      try {
-        hlsRef.current.destroy();
-      } catch {
-        // no-op
-      }
-      hlsRef.current = null;
-    }
-
-    if (!streamUrl) {
-      video.removeAttribute("src");
+  /**
+   * Re-unrestricts the stored rdHostLink to get a fresh CDN URL without re-polling
+   * the full torrent resolution. Called when playback fails (403/404/timeout errors).
+   */
+  const retryPlayback = useCallback(async () => {
+    if (!rdHostLink) {
+      // No stored link → force full re-resolve by clearing all stream state
+      setError(null);
+      setStreamUrl(null);
+      setRdHostLink(null);
+      setStreamUrls({ dashUrl: null, hlsUrl: null, mp4Url: null, originalUrl: null });
       return;
     }
-
-    const isHls = /\.m3u8(?:\?|$)/i.test(streamUrl);
-    const canPlayNativeHls =
-      typeof video.canPlayType === "function" &&
-      video.canPlayType("application/vnd.apple.mpegurl") !== "";
-
-    let disposed = false;
-
-    // For non-HLS URLs (MP4/MPD), set src directly and listen for errors
-    if (!isHls) {
-      video.src = streamUrl;
-      video.load();
-      
-      // Auto-fallback: if MP4 fails (codec not supported), switch to HLS
-      const onError = () => {
-        if (disposed) return;
-        console.warn("[ARC] MP4 playback failed, falling back to HLS transcode...");
-        const fallback = streamUrls?.hlsUrl;
-        if (fallback && fallback !== streamUrl) {
-          setStreamUrl(fallback);
-          setSelectedFormat("hls");
-        } else if (!switchToNextStream()) {
-          setError("Playback failed for this stream.");
-        }
-      };
-      video.addEventListener("error", onError, { once: true });
-      
-      return () => {
-        disposed = true;
-        video.removeEventListener("error", onError);
-      };
-    }
-
-    // For HLS URLs: use native HLS (Safari) or hls.js
-    if (canPlayNativeHls) {
-      video.src = streamUrl;
-      video.load();
-      return;
-    }
-
-    void import("hls.js")
-      .then((mod) => {
-        if (disposed) return;
-
-        const Hls = mod.default;
-        if (!Hls || !Hls.isSupported()) {
-          video.src = streamUrl;
-          video.load();
-          return;
-        }
-
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-          backBufferLength: 30,
-        });
-
-        hlsRef.current = hls;
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-          if (!disposed) hls.loadSource(streamUrl);
-        });
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data?.fatal) return;
-
-          try {
-            hls.destroy();
-          } catch {
-            // no-op
-          }
-          hlsRef.current = null;
-
-          if (!switchToNextStream()) {
-            setError("HLS playback failed for this stream URL.");
-          }
-        });
-      })
-      .catch(() => {
-        if (disposed) return;
-        video.src = streamUrl;
-        video.load();
+    setError(null);
+    setIsRetrying(true);
+    setStreamUrl(null);
+    setStreamLoadStatus("Refreshing CDN link…");
+    try {
+      const clientProfile =
+        typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(navigator.userAgent)
+          ? ("ios_safari" as const)
+          : ("default" as const);
+      const playbackRes = await resolvePlaybackStream({
+        data: {
+          rdHostLink,
+          clientProfile,
+          preferredAudioLanguage: originalAudioLanguage.slice(0, 2) || undefined,
+          preferredQuality: quality,
+        },
       });
-
-    return () => {
-      disposed = true;
-      if (hlsRef.current) {
-        try {
-          hlsRef.current.destroy();
-        } catch {
-          // no-op
-        }
-        hlsRef.current = null;
+      if (playbackRes.error) {
+        setError(playbackRes.error);
+        return;
       }
-    };
-  }, [streamUrl, switchToNextStream, streamUrls]);
+      if (playbackRes.streamUrl || playbackRes.hlsUrl || playbackRes.mp4Url) {
+        setStreamUrls({
+          dashUrl: playbackRes.dashUrl ?? null,
+          hlsUrl: playbackRes.hlsUrl ?? null,
+          mp4Url: playbackRes.mp4Url ?? null,
+          originalUrl: playbackRes.originalUrl ?? null,
+        });
+        setPreferredFormat(playbackRes.preferredFormat || "hls");
+        const primaryUrl =
+          playbackRes.preferredFormat === "hls"
+            ? playbackRes.hlsUrl || playbackRes.streamUrl
+            : playbackRes.mp4Url || playbackRes.streamUrl;
+        setStreamUrl(primaryUrl ?? null);
+        setBitrateWarning(playbackRes.bitrateWarning ?? null);
+        setStreamFilename(playbackRes.filename || "");
+        setAudioTracks([]);
+        setActiveAudioTrackIdx(null);
+        hasUserSelectedAudioTrack.current = false;
+      }
+    } catch (err: any) {
+      setError(err.message || "Retry failed — please go back and try again.");
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [rdHostLink, quality, originalAudioLanguage]);
 
   const refreshAudioTracks = useCallback(() => {
     const v = videoRef.current as (HTMLVideoElement & { audioTracks?: any }) | null;
@@ -517,7 +526,8 @@ function WatchPage() {
       return;
     }
 
-    const tracks: Array<{ enabled?: boolean; language?: string; label?: string; kind?: string }> = [];
+    const tracks: Array<{ enabled?: boolean; language?: string; label?: string; kind?: string }> =
+      [];
     for (let i = 0; i < list.length; i++) {
       tracks.push(list[i]);
     }
@@ -671,7 +681,10 @@ function WatchPage() {
 
     const saveProgress = async () => {
       const v = videoRef.current;
-      if (!v || v.duration === 0) return;
+      if (!v) return;
+
+      const durationVal = Math.floor(v.duration * 1000);
+      if (isNaN(durationVal) || durationVal <= 0) return;
 
       const payload = {
         profile_id: profileId,
@@ -680,7 +693,7 @@ function WatchPage() {
         season: parsed.season || null,
         episode: parsed.episode || null,
         progress: Math.floor(v.currentTime * 1000),
-        duration: Math.floor(v.duration * 1000),
+        duration: durationVal,
         updated_at: new Date().toISOString(),
       };
 
@@ -701,17 +714,20 @@ function WatchPage() {
 
       let error;
       if (data?.id) {
-        const { error: updateErr } = await supabase.from("watch_history").update({
-          progress: payload.progress,
-          duration: payload.duration,
-          updated_at: payload.updated_at
-        }).eq("id", data.id);
+        const { error: updateErr } = await supabase
+          .from("watch_history")
+          .update({
+            progress: payload.progress,
+            duration: payload.duration,
+            updated_at: payload.updated_at,
+          })
+          .eq("id", data.id);
         error = updateErr;
       } else {
         const { error: insertErr } = await supabase.from("watch_history").insert([payload]);
         error = insertErr;
       }
-      
+
       if (error && error.code !== "23505") {
         console.error("[ARC] watch_history save error:", error.message, error.details);
       }
@@ -881,18 +897,66 @@ function WatchPage() {
   if (error) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-black px-6 text-center">
+        <div className="h-16 w-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-6">
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className="text-red-400"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </div>
         <h1 className="font-display text-4xl font-extrabold text-arc-text">Stream Unavailable</h1>
-        <p className="mt-4 text-arc-muted max-w-md">{error}</p>
-        <button
-          onClick={() => {
-            if (parsed.type === "tv")
-              navigate({ to: "/tv/$id", params: { id: parsed.tmdbId.toString() } });
-            else navigate({ to: "/title/$id", params: { id: parsed.tmdbId.toString() } });
-          }}
-          className="mt-8 rounded-full bg-arc-surface-2 px-6 py-3 font-semibold text-white transition hover:bg-arc-accent"
-        >
-          Go Back
-        </button>
+        <p className="mt-4 text-arc-muted max-w-md text-sm leading-relaxed">{error}</p>
+        <div className="mt-8 flex flex-col sm:flex-row gap-3 items-center">
+          <button
+            onClick={() => void retryPlayback()}
+            disabled={isRetrying}
+            className="rounded-full bg-arc-accent text-arc-void px-6 py-3 font-bold text-sm transition hover:bg-white disabled:opacity-50 disabled:cursor-wait flex items-center gap-2"
+          >
+            {isRetrying ? (
+              <>
+                <span className="h-4 w-4 rounded-full border-2 border-arc-void/30 border-t-arc-void animate-spin" />
+                Retrying…
+              </>
+            ) : (
+              <>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                >
+                  <path d="M23 4v6h-6" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                Retry Stream
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              if (parsed.type === "tv")
+                navigate({ to: "/tv/$id", params: { id: parsed.tmdbId.toString() } });
+              else navigate({ to: "/title/$id", params: { id: parsed.tmdbId.toString() } });
+            }}
+            className="rounded-full bg-arc-surface-2 px-6 py-3 font-semibold text-sm text-white transition hover:bg-arc-accent"
+          >
+            Go Back
+          </button>
+        </div>
+        <p className="mt-6 text-xs text-arc-muted/60 max-w-sm">
+          Retry generates a fresh CDN link from Real-Debrid without re-downloading the torrent. Most
+          playback errors are resolved on the first retry.
+        </p>
       </div>
     );
   }
@@ -912,7 +976,7 @@ function WatchPage() {
           <p className="mt-8 font-display text-xl tracking-[0.3em] text-arc-text/60 animate-pulse uppercase">
             Extracting Secure Stream
           </p>
-          <p className="mt-2 text-sm text-arc-muted">Connecting to Real-Debrid network...</p>
+          <p className="mt-2 text-sm text-arc-muted">{streamLoadStatus}</p>
         </div>
       </div>
     );
@@ -928,6 +992,33 @@ function WatchPage() {
       onClick={resetControlsTimer}
       style={{ cursor: showControls ? "default" : "none" }}
     >
+      {/* Bitrate / codec safety banner — auto-dismissed when user clicks ×
+          Only appears when the filter had to downgrade from remux to transcode */}
+      {bitrateWarning && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 max-w-xl w-[90%] flex items-start gap-3 bg-amber-500/15 border border-amber-500/30 backdrop-blur-md rounded-xl px-4 py-3 pointer-events-auto">
+          <svg
+            className="shrink-0 mt-0.5 text-amber-400"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <p className="text-xs text-amber-200 leading-relaxed flex-1">{bitrateWarning}</p>
+          <button
+            onClick={() => setBitrateWarning(null)}
+            className="text-amber-400/60 hover:text-amber-300 transition shrink-0 text-lg leading-none -mt-0.5"
+            aria-label="Dismiss warning"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <AdvancedPlayer
         ref={videoRef}
         autoPlay
@@ -953,7 +1044,8 @@ function WatchPage() {
           setMuted(videoRef.current?.muted || false);
         }}
         onError={() => {
-          setError("Playback failed for this stream URL.");
+          console.warn("[ARC] AdvancedPlayer fatal error — will retry with fresh CDN link");
+          setError("Playback failed. A fresh CDN link is needed — click Retry Stream below.");
         }}
       />
 
@@ -965,7 +1057,7 @@ function WatchPage() {
           if ((e.target as HTMLElement).closest("[data-controls]")) return;
           // On mobile: first tap shows/hides controls, NOT play/pause
           // Play/pause is handled by the dedicated button
-          if ('ontouchstart' in window) {
+          if ("ontouchstart" in window) {
             if (showControls) {
               setShowControls(false);
               if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
@@ -1000,7 +1092,7 @@ function WatchPage() {
       />
 
       {/* Buffering Overlay */}
-      {(buffering && playing) && (
+      {buffering && playing && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <div className="h-14 w-14 animate-spin rounded-full border-2 border-transparent border-t-arc-accent"></div>
         </div>
@@ -1132,12 +1224,24 @@ function WatchPage() {
               className="text-white hover:text-arc-accent transition p-2 -m-2 active:scale-90"
             >
               {playing ? (
-                <svg width="28" height="28" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
+                <svg
+                  width="28"
+                  height="28"
+                  className="sm:w-[28px] sm:h-[28px]"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
                   <rect x="6" y="4" width="4" height="16" rx="1" />
                   <rect x="14" y="4" width="4" height="16" rx="1" />
                 </svg>
               ) : (
-                <svg width="28" height="28" className="sm:w-[28px] sm:h-[28px]" viewBox="0 0 24 24" fill="currentColor">
+                <svg
+                  width="28"
+                  height="28"
+                  className="sm:w-[28px] sm:h-[28px]"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
                   <path d="M8 5v14l11-7z" />
                 </svg>
               )}
@@ -1297,6 +1401,35 @@ function WatchPage() {
                       {q === "auto" ? "Auto" : `${q}p`}
                     </button>
                   ))}
+
+                  {/* Format Switching */}
+                  <div className="mt-2 pt-2 border-t border-white/10">
+                    <div className="px-3 py-1 text-[10px] text-arc-muted uppercase tracking-wider font-bold">
+                      Format
+                    </div>
+                    {(["hls", "mp4", "original"] as const).map((f) => {
+                      const url = streamUrls[`${f}Url`];
+                      if (!url && f !== "hls") return null;
+                      return (
+                        <button
+                          key={f}
+                          onClick={() => {
+                            setShowQualityMenu(false);
+                            if (f !== selectedFormat) {
+                              switchFormat(f);
+                            }
+                          }}
+                          className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${selectedFormat === f ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
+                        >
+                          {f === "hls"
+                            ? "HLS (Transcoded)"
+                            : f === "mp4"
+                              ? "MP4 (Remuxed)"
+                              : "Original (MKV/Source)"}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -1421,11 +1554,11 @@ function WatchPage() {
 
       {/* Subtitle Selector Modal (Root Level to explicitly bypass any local stacking contexts) */}
       {showSubMenu && (
-        <div 
+        <div
           className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setShowSubMenu(false)}
         >
-          <div 
+          <div
             className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl relative"
             onClick={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
@@ -1433,12 +1566,24 @@ function WatchPage() {
           >
             <div className="p-4 border-b border-white/10 flex items-center justify-between shrink-0">
               <h3 className="font-semibold text-white tracking-wide">Subtitles</h3>
-              <button onClick={() => setShowSubMenu(false)} className="text-white/50 hover:text-white">✕</button>
+              <button
+                onClick={() => setShowSubMenu(false)}
+                className="text-white/50 hover:text-white"
+              >
+                ✕
+              </button>
             </div>
 
-            <div className="overflow-y-auto p-2 flex-1 overscroll-contain" style={{ touchAction: 'pan-y' }}>
+            <div
+              className="overflow-y-auto p-2 flex-1 overscroll-contain"
+              style={{ touchAction: "pan-y" }}
+            >
               <button
-                onClick={() => { setActiveSub(null); setActiveSubVttUrl(null); setShowSubMenu(false); }}
+                onClick={() => {
+                  setActiveSub(null);
+                  setActiveSubVttUrl(null);
+                  setShowSubMenu(false);
+                }}
                 className={`w-full text-left px-3 py-3 text-sm rounded-xl transition mb-1 ${!activeSub ? "text-arc-accent flex items-center gap-2 bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
               >
                 {!activeSub && <span className="w-1.5 h-1.5 rounded-full bg-arc-accent"></span>}
@@ -1461,23 +1606,40 @@ function WatchPage() {
                     }}
                     className={`w-full text-left px-3 py-3 text-sm rounded-xl transition truncate mb-1 ${isActive ? "text-arc-accent flex items-center gap-2 bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
                   >
-                    {isActive && <span className="w-1.5 h-1.5 rounded-full bg-arc-accent shrink-0"></span>}
+                    {isActive && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-arc-accent shrink-0"></span>
+                    )}
                     {sub.label}
                   </button>
                 );
               })}
               {subtitles.length === 0 && (
-                <div className="px-3 py-4 text-sm text-arc-muted text-center italic">No subtitles found</div>
+                <div className="px-3 py-4 text-sm text-arc-muted text-center italic">
+                  No subtitles found
+                </div>
               )}
             </div>
 
             <div className="p-2 border-t border-white/10 bg-black/40 rounded-b-2xl shrink-0">
               <button
-                onClick={() => { setShowSubMenu(false); setShowSubSettings(true); }}
+                onClick={() => {
+                  setShowSubMenu(false);
+                  setShowSubSettings(true);
+                }}
                 className="w-full text-left px-3 py-3 text-sm rounded-xl text-white/70 hover:text-white hover:bg-white/5 transition flex justify-between items-center"
               >
                 Customize Appearance
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+                </svg>
               </button>
             </div>
           </div>
@@ -1486,11 +1648,11 @@ function WatchPage() {
 
       {/* Subtitle Settings Modal (Root Level) */}
       {showSubSettings && (
-        <div 
+        <div
           className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setShowSubSettings(false)}
         >
-          <div 
+          <div
             className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl relative"
             onClick={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
@@ -1498,15 +1660,23 @@ function WatchPage() {
           >
             <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
               <h3 className="font-semibold text-white">Subtitle Customizer</h3>
-              <button onClick={() => setShowSubSettings(false)} className="text-white/50 hover:text-white">✕</button>
+              <button
+                onClick={() => setShowSubSettings(false)}
+                className="text-white/50 hover:text-white"
+              >
+                ✕
+              </button>
             </div>
 
-            <div className="overflow-y-auto p-4 space-y-4 text-sm flex-1 overscroll-contain" style={{ touchAction: 'pan-y' }}>
+            <div
+              className="overflow-y-auto p-4 space-y-4 text-sm flex-1 overscroll-contain"
+              style={{ touchAction: "pan-y" }}
+            >
               {/* Size */}
               <div>
                 <label className="block text-white/60 mb-1 text-xs">Size</label>
-                <select 
-                  value={subStore.subStyleSize} 
+                <select
+                  value={subStore.subStyleSize}
                   onChange={(e) => subStore.setSubStyleSize(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
                 >
@@ -1520,8 +1690,8 @@ function WatchPage() {
               {/* Color */}
               <div>
                 <label className="block text-white/60 mb-1 text-xs">Color</label>
-                <select 
-                  value={subStore.subStyleColor} 
+                <select
+                  value={subStore.subStyleColor}
                   onChange={(e) => subStore.setSubStyleColor(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
                 >
@@ -1535,8 +1705,8 @@ function WatchPage() {
               {/* Background */}
               <div>
                 <label className="block text-white/60 mb-1 text-xs">Background</label>
-                <select 
-                  value={subStore.subStyleBackground} 
+                <select
+                  value={subStore.subStyleBackground}
                   onChange={(e) => subStore.setSubStyleBackground(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
                 >
@@ -1549,37 +1719,57 @@ function WatchPage() {
               {/* Edge Style */}
               <div>
                 <label className="block text-white/60 mb-1 text-xs">Edge Style</label>
-                <select 
-                  value={subStore.subStyleEdge} 
+                <select
+                  value={subStore.subStyleEdge}
                   onChange={(e) => subStore.setSubStyleEdge(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded p-1.5 text-white"
                 >
                   <option value="none">None</option>
-                  <option value="0px 1px 4px rgba(0,0,0,0.8), 0px 2px 12px rgba(0,0,0,0.8)">Drop Shadow</option>
-                  <option value="-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000">Outline</option>
+                  <option value="0px 1px 4px rgba(0,0,0,0.8), 0px 2px 12px rgba(0,0,0,0.8)">
+                    Drop Shadow
+                  </option>
+                  <option value="-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000">
+                    Outline
+                  </option>
                 </select>
               </div>
 
               <div className="pt-2 border-t border-white/10">
                 <label className="block text-white/60 mb-1 text-xs flex justify-between">
                   <span>Timing Offset</span>
-                  <span className="tabular-nums font-mono text-arc-accent">{offsetMs > 0 ? "+" : ""}{offsetMs} ms</span>
+                  <span className="tabular-nums font-mono text-arc-accent">
+                    {offsetMs > 0 ? "+" : ""}
+                    {offsetMs} ms
+                  </span>
                 </label>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setOffsetMs(o => o - 250)} className="bg-white/5 hover:bg-white/10 p-1 rounded min-w-8">-</button>
-                  <input 
-                    type="range" min="-5000" max="5000" step="50"
-                    value={offsetMs} onChange={e => setOffsetMs(Number(e.target.value))}
+                  <button
+                    onClick={() => setOffsetMs((o) => o - 250)}
+                    className="bg-white/5 hover:bg-white/10 p-1 rounded min-w-8"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="range"
+                    min="-5000"
+                    max="5000"
+                    step="50"
+                    value={offsetMs}
+                    onChange={(e) => setOffsetMs(Number(e.target.value))}
                     className="w-full accent-arc-accent"
                   />
-                  <button onClick={() => setOffsetMs(o => o + 250)} className="bg-white/5 hover:bg-white/10 p-1 rounded min-w-8">+</button>
+                  <button
+                    onClick={() => setOffsetMs((o) => o + 250)}
+                    className="bg-white/5 hover:bg-white/10 p-1 rounded min-w-8"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
