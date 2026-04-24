@@ -1239,8 +1239,39 @@ function WatchPage() {
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
 
-            {/* Quality selector removed (streaming direct MKV) */}
-            {/* Format/Server switcher removed */}
+            {/* Quality selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowQualityMenu(!showQualityMenu)}
+                className="text-white/70 hover:text-white transition text-xs border border-white/20 rounded-md px-2 py-1"
+                title="Stream quality"
+              >
+                {quality === "auto" ? "Auto" : `${quality}p`}
+              </button>
+              {showQualityMenu && (
+                <div className="absolute bottom-full left-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[120px] backdrop-blur-xl">
+                  {(["auto", "2160", "1080", "720", "480"] as const).map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => {
+                        setShowQualityMenu(false);
+                        if (q !== quality) {
+                          setQuality(q);
+                          setStreamUrl(null);
+                          setBackupStreams([]);
+                          setCurrentStreamIndex(0);
+                          setStreamReady(false);
+                          setBuffering(true);
+                        }
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${quality === q ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
+                    >
+                      {q === "auto" ? "Auto" : `${q}p`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">

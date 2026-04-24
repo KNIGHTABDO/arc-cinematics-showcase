@@ -363,27 +363,49 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         console.log(`[ARC] Selected audio track ID: ${selectedAudioId} (target: ${targetLang}, found exact: ${!!exactMatch}, engFallback: ${!!engFallback})`);
       }
 
-      // Step C: Construct Stream URL using modelUrl for DASH
+      // Step C: Match Requested Quality
+      const availableVals = Object.values(mediaInfos.availableQualities || {}) as string[];
+      let qualityValue = availableVals.includes("full") ? "full" : availableVals[0] || "full";
+      
+      if (preferredQuality && preferredQuality !== "auto") {
+        const qualityMap: Record<string, string[]> = {
+          "2160": ["2160p_16mbps", "2160P", "2160p", "full"],
+          "1080": ["1080p_8mbps", "1080p_4mbps", "1080P", "1080p"],
+          "720": ["720p_4mbps", "720p_2mbps", "720P", "720p"],
+          "480": ["480p_2mbps", "480p_1mbps", "480P", "480p"]
+        };
+        const targets = qualityMap[preferredQuality] || [];
+        for (const t of targets) {
+           if (availableVals.includes(t)) {
+              qualityValue = t;
+              break;
+           }
+        }
+      }
+      
+      console.log(`[ARC] Selected quality value: ${qualityValue} (from preferred: ${preferredQuality})`);
+
+      // Step D: Construct Stream URL using liveMP4 (mp4 format)
       if (!mediaInfos.modelUrl) {
          throw new Error("No modelUrl provided by Real-Debrid for this content.");
       }
 
-      // We explicitly force quality = 'full' (Original) and format = 'mpd' (DASH)
-      // This bypasses the RD real-time transcode engine completely and performs a 
-      // simple fast remux which starts instantly, solving the buffering/slow load issues.
+      // Use liveMP4 (format=mp4) instead of DASH.
+      // This forces the browser to stream it via the native HTML5 <video> tag, bypassing download prompts
+      // and avoiding DASH MSE codec restrictions.
       const streamUrl = mediaInfos.modelUrl
          .replace('{audio}', selectedAudioId || 'none')
          .replace('{subtitles}', 'none')
          .replace('{audioCodec}', 'aac')
-         .replace('{quality}', 'full')
-         .replace('{format}', 'mpd');
+         .replace('{quality}', qualityValue)
+         .replace('{format}', 'mp4');
 
-      console.log(`[ARC] Final Constructed DASH URL (Fast Remux): ${streamUrl}`);
+      console.log(`[ARC] Final Constructed MP4 URL (LiveMP4): ${streamUrl}`);
 
       return {
         streamUrl,
-        dashUrl: streamUrl,
-        preferredFormat: "dash",
+        mp4Url: streamUrl,
+        preferredFormat: "mp4",
         availableAudioTracks: audioTracksArray,
         activeAudioTrackId: selectedAudioId,
         filename: targetFile.path.split('/').pop() || "",
