@@ -1,5 +1,29 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AdvancedPlayer } from "@/components/AdvancedPlayer";
+
+const TIME_REGEX = /(\d{2}):(\d{2}):(\d{2})\.(\d{3})/g;
+
+export const shiftVttTime = (vttText: string, offsetSeconds: number): string => {
+  if (!vttText || offsetSeconds === 0) return vttText;
+  
+  return vttText.replace(TIME_REGEX, (match, hours, minutes, seconds, milliseconds) => {
+    const totalMs = 
+      parseInt(hours, 10) * 3600000 + 
+      parseInt(minutes, 10) * 60000 + 
+      parseInt(seconds, 10) * 1000 + 
+      parseInt(milliseconds, 10);
+      
+    const newTotalMs = Math.max(0, totalMs + (offsetSeconds * 1000));
+    
+    const newH = Math.floor(newTotalMs / 3600000).toString().padStart(2, '0');
+    const newM = Math.floor((newTotalMs % 3600000) / 60000).toString().padStart(2, '0');
+    const newS = Math.floor((newTotalMs % 60000) / 1000).toString().padStart(2, '0');
+    const newMs = (newTotalMs % 1000).toString().padStart(3, '0');
+    
+    return `${newH}:${newM}:${newS}.${newMs}`;
+  });
+};
 import { supabase } from "@/lib/supabase";
 import { getStreamForMovie } from "@/lib/server/streams";
 import { getSubtitlesForMedia, getSubtitleVtt } from "@/lib/server/subtitles";
@@ -49,10 +73,14 @@ function WatchPage() {
   const controlsTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const progressInterval = useRef<ReturnType<typeof setInterval>>(undefined);
   const stallTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const rebufferTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hlsRef = useRef<any>(null);
   const hasUserSelectedAudioTrack = useRef(false);
 
   const parsed = parseWatchId(id);
 
+  const [streamUrls, setStreamUrls] = useState<{dashUrl: string|null, hlsUrl: string|null, mp4Url: string|null}>({dashUrl: null, hlsUrl: null, mp4Url: null});
+  const [preferredFormat, setPreferredFormat] = useState<"dash"|"hls"|"mp4">("hls");
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [streamFilename, setStreamFilename] = useState<string>("");
   const [backupStreams, setBackupStreams] = useState<string[]>([]);
@@ -74,12 +102,17 @@ function WatchPage() {
   const [subtitles, setSubtitles] = useState<SubtitleTrack[]>([]);
   const [activeSub, setActiveSub] = useState<string | null>(null);
   const [activeSubVttUrl, setActiveSubVttUrl] = useState<string | null>(null);
+  const [rawVttText, setRawVttText] = useState<string | null>(null);
   const [showSubMenu, setShowSubMenu] = useState(false);
   const [showSubSettings, setShowSubSettings] = useState(false);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [offsetMs, setOffsetMs] = useState(0);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [showFormatMenu, setShowFormatMenu] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState<"dash"|"hls"|"mp4">("hls");
+  const [savedProgress, setSavedProgress] = useState<number | null>(null);
+  const [hasRestoredProgress, setHasRestoredProgress] = useState(false);
   const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
   const [activeAudioTrackIdx, setActiveAudioTrackIdx] = useState<number | null>(null);
   const [originalAudioLanguage, setOriginalAudioLanguage] = useState<string>("");
@@ -146,7 +179,7 @@ function WatchPage() {
             ? "ios_safari"
             : "default";
 
-        const res: any = await getStreamForMovie({
+        const resolveRequest = getStreamForMovie({
           data: {
             watchId: id,
             preferredQuality: quality,
@@ -154,6 +187,24 @@ function WatchPage() {
             preferredAudioLanguage: preferredAudioLanguage.slice(0, 2) || undefined,
           },
         });
+
+        let resolverTimeout: ReturnType<typeof setTimeout> | undefined;
+        const timeoutRequest = new Promise((_, reject) => {
+          resolverTimeout = setTimeout(() => {
+            reject(
+              new Error(
+                "Stream lookup took too long. Please retry; resolver has moved to another source.",
+              ),
+            );
+          }, 45000);
+        });
+
+        let res: any;
+        try {
+          res = await Promise.race([resolveRequest, timeoutRequest]);
+        } finally {
+          if (resolverTimeout) clearTimeout(resolverTimeout);
+        }
         if (cancelled) return;
 
         if (res.error || res.errorCode) {
@@ -166,8 +217,10 @@ function WatchPage() {
           throw new Error(`${code}${res.error || "Failed to locate stream."}`);
         }
 
-        if (res.streamUrl) {
-          setStreamUrl(res.streamUrl);
+        if (res.streamUrl || res.dashUrl || res.hlsUrl || res.mp4Url) {
+          setStreamUrls({ dashUrl: res.dashUrl, hlsUrl: res.hlsUrl, mp4Url: res.mp4Url });
+          setPreferredFormat(res.preferredFormat || "hls");
+          setStreamUrl(res.streamUrl || res.hlsUrl || res.mp4Url || res.dashUrl);
           setStreamFilename(res.filename || "");
           setBackupStreams(Array.isArray(res.backupStreams) ? res.backupStreams : []);
           setCurrentStreamIndex(0);
@@ -321,6 +374,111 @@ function WatchPage() {
     return true;
   }, [backupStreams, currentStreamIndex]);
 
+  const switchFormat = useCallback((format: "dash" | "hls" | "mp4") => {
+    const url = streamUrls[`${format}Url`];
+    if (!url) return;
+    
+    console.log(`[ARC] Switching to format: ${format}`);
+    setSelectedFormat(format);
+    setStreamUrl(url);
+    setStreamReady(false);
+    setBuffering(true);
+    setHasRestoredProgress(false);
+    
+    const v = videoRef.current;
+    if (v) {
+      v.load();
+    }
+  }, [streamUrls]);
+
+  // Attach stream source and use hls.js for desktop playback when only HLS is available.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (hlsRef.current) {
+      try {
+        hlsRef.current.destroy();
+      } catch {
+        // no-op
+      }
+      hlsRef.current = null;
+    }
+
+    if (!streamUrl) {
+      video.removeAttribute("src");
+      return;
+    }
+
+    const isHls = /\.m3u8(?:\?|$)/i.test(streamUrl);
+    const canPlayNativeHls =
+      typeof video.canPlayType === "function" &&
+      video.canPlayType("application/vnd.apple.mpegurl") !== "";
+
+    if (!isHls || canPlayNativeHls) {
+      video.src = streamUrl;
+      video.load();
+      return;
+    }
+
+    let disposed = false;
+
+    void import("hls.js")
+      .then((mod) => {
+        if (disposed) return;
+
+        const Hls = mod.default;
+        if (!Hls || !Hls.isSupported()) {
+          video.src = streamUrl;
+          video.load();
+          return;
+        }
+
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          backBufferLength: 30,
+        });
+
+        hlsRef.current = hls;
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          if (!disposed) hls.loadSource(streamUrl);
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data?.fatal) return;
+
+          try {
+            hls.destroy();
+          } catch {
+            // no-op
+          }
+          hlsRef.current = null;
+
+          if (!switchToNextStream()) {
+            setError("HLS playback failed for this stream URL.");
+          }
+        });
+      })
+      .catch(() => {
+        if (disposed) return;
+        video.src = streamUrl;
+        video.load();
+      });
+
+    return () => {
+      disposed = true;
+      if (hlsRef.current) {
+        try {
+          hlsRef.current.destroy();
+        } catch {
+          // no-op
+        }
+        hlsRef.current = null;
+      }
+    };
+  }, [streamUrl, switchToNextStream]);
+
   const refreshAudioTracks = useCallback(() => {
     const v = videoRef.current as (HTMLVideoElement & { audioTracks?: any }) | null;
     const list = v?.audioTracks;
@@ -453,26 +611,43 @@ function WatchPage() {
       const v = videoRef.current;
       if (!v || streamReady) return;
 
-      const bufferedEnd = v.buffered?.length ? v.buffered.end(v.buffered.length - 1) : 0;
-      const hasStarted = v.currentTime > 0.25 || bufferedEnd > 1;
+      const hasStarted = v.currentTime > 0.25;
       if (hasStarted) return;
 
-      const switched = switchToNextStream();
-      if (!switched) {
-        setError("Stream startup timed out. Please try another quality or title.");
-      }
+      setError("Stream startup timed out. The player could not load the video in time.");
     }, 18000);
 
     return () => {
       if (stallTimeout.current) clearTimeout(stallTimeout.current);
     };
-  }, [streamUrl, streamReady, switchToNextStream]);
+  }, [streamUrl, streamReady]);
+
+  // Detect post-start buffering stalls and fail over instead of spinning forever.
+  useEffect(() => {
+    if (!streamUrl || !streamReady || !buffering || !playing) return;
+
+    if (rebufferTimeout.current) clearTimeout(rebufferTimeout.current);
+
+    const startTime = videoRef.current?.currentTime || 0;
+    rebufferTimeout.current = setTimeout(() => {
+      const v = videoRef.current;
+      if (!v) return;
+
+      const progressed = (v.currentTime || 0) - startTime > 0.2;
+      if (!buffering || progressed) return;
+
+      setError("Stream stalled while buffering. Please try another quality or title.");
+    }, 12000);
+
+    return () => {
+      if (rebufferTimeout.current) clearTimeout(rebufferTimeout.current);
+    };
+  }, [streamUrl, streamReady, buffering, playing]);
 
   useEffect(() => {
     const profileId = localStorage.getItem("arc_active_profile");
-    if (!profileId || !videoRef.current) return;
+    if (!profileId) return;
 
-    // Helper: PostgREST needs .is() for null, .eq() for values
     let restoreQuery = supabase
       .from("watch_history")
       .select("progress")
@@ -487,13 +662,32 @@ function WatchPage() {
     else restoreQuery = restoreQuery.is("episode", null);
 
     restoreQuery.maybeSingle().then(({ data }) => {
-        if (data?.progress && videoRef.current) {
-          videoRef.current.currentTime = data.progress;
-        }
-      });
-  }, [id, streamUrl]);
+      if (data?.progress && data.progress > 10) {
+        setSavedProgress(data.progress);
+      }
+    });
+  }, [id, parsed.tmdbId, parsed.type, parsed.season, parsed.episode]);
 
-  // Save progress every 1 second
+  // Restore progress after stream starts playing
+  useEffect(() => {
+    if (!savedProgress || hasRestoredProgress || !videoRef.current) return;
+    if (!streamReady) return;
+
+    const v = videoRef.current;
+    if (!v || v.currentTime > 0) return;
+
+    const timer = setTimeout(() => {
+      if (v && savedProgress > 0 && v.currentTime === 0) {
+        console.log(`[ARC] Resuming from ${savedProgress}s`);
+        v.currentTime = savedProgress;
+        setHasRestoredProgress(true);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [savedProgress, streamReady, hasRestoredProgress]);
+
+  // Save progress every 10 seconds while playing
   useEffect(() => {
     const profileId = localStorage.getItem("arc_active_profile");
     if (!profileId || !streamUrl) return;
@@ -513,7 +707,6 @@ function WatchPage() {
         updated_at: new Date().toISOString(),
       };
 
-      // Build query with proper null handling
       let findQuery = supabase
         .from("watch_history")
         .select("id")
@@ -547,14 +740,12 @@ function WatchPage() {
       }
     };
 
-    // Save every 1 second while playing
     progressInterval.current = setInterval(() => {
       const v = videoRef.current;
       if (!v || v.paused || v.ended) return;
       saveProgress();
-    }, 1000);
+    }, 10000);
 
-    // Also save immediately on pause or before unload
     const onPause = () => saveProgress();
     const onBeforeUnload = () => saveProgress();
     const videoEl = videoRef.current;
@@ -565,7 +756,6 @@ function WatchPage() {
       if (progressInterval.current) clearInterval(progressInterval.current);
       videoEl?.removeEventListener("pause", onPause);
       window.removeEventListener("beforeunload", onBeforeUnload);
-      // Final save on unmount
       saveProgress();
     };
   }, [id, streamUrl]);
@@ -595,7 +785,12 @@ function WatchPage() {
         case " ":
         case "k":
           e.preventDefault();
-          v.paused ? v.play() : v.pause();
+          if (v.paused) {
+            const p = v.play();
+            if (p !== undefined) p.catch(() => {});
+          } else {
+            v.pause();
+          }
           break;
         case "q":
           e.preventDefault();
@@ -756,17 +951,13 @@ function WatchPage() {
       onClick={resetControlsTimer}
       style={{ cursor: showControls ? "default" : "none" }}
     >
-      {/* Video Element — NO crossOrigin for RD links */}
-      <video
+      <AdvancedPlayer
         ref={videoRef}
-        src={streamUrl}
         autoPlay
-        playsInline
-        // @ts-ignore — webkit vendor attributes for older iOS
-        webkit-playsinline=""
-        x-webkit-airplay="deny"
-        preload="metadata"
         className="h-full w-full object-contain"
+        streamUrl={streamUrl || ""}
+        streamUrls={streamUrls}
+        subtitleBlobUrl={activeSubVttUrl}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
@@ -774,7 +965,6 @@ function WatchPage() {
           setDuration(videoRef.current?.duration || 0);
           refreshAudioTracks();
         }}
-        onCanPlay={() => setStreamReady(true)}
         onWaiting={() => setBuffering(true)}
         onPlaying={() => {
           setBuffering(false);
@@ -785,40 +975,9 @@ function WatchPage() {
           setMuted(videoRef.current?.muted || false);
         }}
         onError={() => {
-          const v = videoRef.current;
-          const mediaError = v?.error;
-          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-          // Try backup streams first
-          if (switchToNextStream()) {
-            return;
-          }
-
-          // iOS-specific error messaging
-          if (isIOS && mediaError) {
-            const code = mediaError.code;
-            if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-              setError(
-                "This stream could not be loaded on iOS. " +
-                "The streaming proxy is unavailable or returned an invalid transcode response. Please try again in a moment."
-              );
-              return;
-            }
-          }
-
           setError("Playback failed for this stream URL.");
         }}
-      >
-        {activeSubVttUrl && (
-          <track
-            kind="subtitles"
-            src={activeSubVttUrl}
-            srcLang={(profile?.subtitle_language || "en").slice(0, 2)}
-            label={t("player.subtitles", lang)}
-            default
-          />
-        )}
-      </video>
+      />
 
       {/* Touch overlay — tap toggles controls visibility, double-tap to seek ±10s */}
       <div
@@ -838,7 +997,14 @@ function WatchPage() {
           } else {
             // Desktop: click to play/pause
             const v = videoRef.current;
-            if (v) v.paused ? v.play() : v.pause();
+            if (v) {
+              if (v.paused) {
+                const p = v.play();
+                if (p !== undefined) p.catch(() => {});
+              } else {
+                v.pause();
+              }
+            }
             resetControlsTimer();
           }
         }}
@@ -856,7 +1022,7 @@ function WatchPage() {
       />
 
       {/* Buffering Overlay */}
-      {(buffering || !streamReady) && (
+      {(buffering && playing) && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <div className="h-14 w-14 animate-spin rounded-full border-2 border-transparent border-t-arc-accent"></div>
         </div>
@@ -976,7 +1142,14 @@ function WatchPage() {
             <button
               onClick={() => {
                 const v = videoRef.current;
-                if (v) v.paused ? v.play() : v.pause();
+                if (v) {
+                  if (v.paused) {
+                    const p = v.play();
+                    if (p !== undefined) p.catch(() => {});
+                  } else {
+                    v.pause();
+                  }
+                }
               }}
               className="text-white hover:text-arc-accent transition p-2 -m-2 active:scale-90"
             >
@@ -1146,6 +1319,44 @@ function WatchPage() {
                       {q === "auto" ? "Auto" : `${q}p`}
                     </button>
                   ))}
+                </div>
+              )}
+            {/* Format/Server switcher */}
+            <div className="relative">
+              <button
+                onClick={() => setShowFormatMenu(!showFormatMenu)}
+                className="text-white/70 hover:text-white transition text-xs border border-white/20 rounded-md px-2 py-1"
+                title="Format/Server"
+              >
+                {selectedFormat.toUpperCase()}
+              </button>
+              {showFormatMenu && (
+                <div className="absolute bottom-full left-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[140px] backdrop-blur-xl z-[100]">
+                  {(["dash", "hls", "mp4"] as const).map((fmt) => {
+                    const url = streamUrls[`${fmt}Url`];
+                    const isAvailable = !!url;
+                    return (
+                      <button
+                        key={fmt}
+                        onClick={() => {
+                          setShowFormatMenu(false);
+                          if (isAvailable && fmt !== selectedFormat) {
+                            switchFormat(fmt);
+                          }
+                        }}
+                        disabled={!isAvailable}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${
+                          selectedFormat === fmt 
+                            ? "text-arc-accent bg-arc-accent/10" 
+                            : isAvailable 
+                              ? "text-white/70 hover:bg-white/5" 
+                              : "text-white/20 cursor-not-allowed"
+                        }`}
+                      >
+                        {fmt.toUpperCase()}{!isAvailable && " (unavailable)"}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

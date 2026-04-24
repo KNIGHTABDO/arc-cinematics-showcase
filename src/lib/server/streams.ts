@@ -1,67 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import {
-  chooseTargetFileDetailed,
-  rankCandidates,
-  type RDTorrentFile,
-  type StreamCandidate,
-} from "./stream-resolver-utils";
-import { logStreamResolverDiagnostics } from "./stream-telemetry";
 
-const RD_TOKEN = import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
+const RD_TOKEN = (typeof process !== "undefined" ? process.env.REAL_DEBRID_API_KEY : undefined) || import.meta.env.VITE_REAL_DEBRID_TOKEN as string | undefined;
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
 
-const RESOLVER_MAX_CANDIDATES = 5;
-const RESOLVER_POLL_ATTEMPTS = 6; // Quick fail for false-positive RD+ caches (was 25). 6 * 1.8s ~ 10s wait.
-const RESOLVER_POLL_DELAY_MS = 1800;
-const PREFLIGHT_TIMEOUT_MS = 3500;
-const MEDIAFLOW_PROXY_PREFIX = "/mfproxy";
-const MEDIAFLOW_STREAM_PATH = "/proxy/stream";
+const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
 
 type MediaType = "movie" | "tv";
-
-type ResolveErrorCode =
-  | "NO_RDTOKEN"
-  | "NO_TMDBKEY"
-  | "TMDB_IMDB_MISSING"
-  | "NO_CANDIDATES"
-  | "RD_ADD_FAIL"
-  | "RD_INFO_FAIL"
-  | "RD_SELECT_FAIL"
-  | "RD_UNRESTRICT_FAIL"
-  | "RD_STATUS_FAIL"
-  | "STREAM_PREFLIGHT_FAIL"
-  | "ALL_CANDIDATES_FAILED"
-  | "UNKNOWN";
-
-export interface ResolverAttempt {
-  infoHash: string;
-  title: string;
-  score: number;
-  startedAt: string;
-  endedAt?: string;
-  status: "success" | "failed";
-  errorCode?: ResolveErrorCode;
-  error?: string;
-  selectedFile?: { id: number; path: string; bytes: number };
-  torrentId?: string;
-  preflight?: { ok: boolean; status?: number; contentType?: string | null };
-  rejectReasons?: string[];
-}
-
-export interface ResolverDiagnostics {
-  watchId: string;
-  mediaType: MediaType;
-  tmdbId: string;
-  imdbId?: string;
-  candidateCount: number;
-  attempts: ResolverAttempt[];
-  selected?: {
-    infoHash: string;
-    torrentId: string;
-    selectedFile?: { id: number; path: string; bytes: number };
-  };
-}
 
 interface TorrentioStreamRaw {
   name?: string;
@@ -71,74 +16,23 @@ interface TorrentioStreamRaw {
   url?: string;
 }
 
+interface RDTorrentFile {
+  id: number;
+  path: string;
+  bytes: number;
+  selected?: number;
+}
+
 interface RDTorrentInfo {
   status?: string;
   files?: RDTorrentFile[];
   links?: string[];
 }
 
-interface RDAddMagnetError {
-  error?: string;
-}
-
 interface RDUnrestrictResponse {
+  id?: string;
   error?: string;
   download?: string;
-}
-
-function buildMediaFlowStreamUrl(sourceUrl: string, proxyPassword?: string): string {
-  const params = new URLSearchParams();
-  params.set("d", sourceUrl);
-  params.set("transcode", "true");
-
-  const pass = proxyPassword?.trim();
-  if (pass) {
-    params.set("api_password", pass);
-  }
-
-  return `${MEDIAFLOW_PROXY_PREFIX}${MEDIAFLOW_STREAM_PATH}?${params.toString()}`;
-}
-
-function uniqueUrls(urls: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-
-  for (const url of urls) {
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    out.push(url);
-  }
-
-  return out;
-}
-
-
-
-function parseWatchId(id: string): {
-  type: MediaType;
-  tmdbId: string;
-  season?: number;
-  episode?: number;
-} {
-  const tvMatch = id.match(/^tv-(\d+)-s(\d+)e(\d+)$/);
-  if (tvMatch) {
-    return {
-      type: "tv",
-      tmdbId: tvMatch[1],
-      season: Number.parseInt(tvMatch[2], 10),
-      episode: Number.parseInt(tvMatch[3], 10),
-    };
-  }
-  return { type: "movie", tmdbId: id };
-}
-
-function normalizePreferredAudioLanguage(input?: string): string | undefined {
-  const raw = (input || "").toLowerCase().trim();
-  if (!raw) return undefined;
-
-  const code = raw.split(/[-_]/)[0];
-  if (!/^[a-z]{2,3}$/.test(code)) return undefined;
-  return code;
 }
 
 async function sleep(ms: number) {
@@ -157,6 +51,42 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function rdRequest(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = 12000,
+): Promise<Response> {
+  const headers = new Headers(init.headers ?? {});
+  headers.set("Authorization", `Bearer ${RD_TOKEN}`);
+
+  return fetchWithTimeout(
+    `${RD_API_BASE}${path}`,
+    {
+      ...init,
+      headers,
+    },
+    timeoutMs,
+  );
+}
+
+function parseWatchId(id: string): {
+  type: MediaType;
+  tmdbId: string;
+  season?: number;
+  episode?: number;
+} {
+  const tvMatch = id.match(/^tv-(\d+)-s(\d+)e(\d+)$/);
+  if (tvMatch) {
+    return {
+      type: "tv",
+      tmdbId: tvMatch[1],
+      season: Number.parseInt(tvMatch[2], 10),
+      episode: Number.parseInt(tvMatch[3], 10),
+    };
+  }
+  return { type: "movie", tmdbId: id };
 }
 
 async function tmdbMovieToImdb(tmdbId: string): Promise<string> {
@@ -187,10 +117,8 @@ function extractInfoHashAndFileIdx(stream: TorrentioStreamRaw): {
   let infoHash = typeof s?.infoHash === "string" ? s.infoHash : undefined;
   let fileIdx = Number.isInteger(s?.fileIdx) ? (s.fileIdx as number) : undefined;
 
-  // Fallback when using Torrentio RD resolve URLs
   if (!infoHash && typeof s?.url === "string" && s.url.includes("/resolve/realdebrid/")) {
     const parts = s.url.split("/");
-    // Expected: /resolve/realdebrid/TOKEN/HASH/null/IDX/filename
     if (parts.length >= 9) {
       infoHash = parts[6];
       const idxRaw = parts[8];
@@ -202,6 +130,13 @@ function extractInfoHashAndFileIdx(stream: TorrentioStreamRaw): {
   }
 
   return { infoHash: infoHash?.toLowerCase(), fileIdx };
+}
+
+interface StreamCandidate {
+  magnet: string;
+  infoHash: string;
+  title: string;
+  fileIdx?: number;
 }
 
 async function fetchTorrentioStreams(
@@ -241,17 +176,16 @@ async function addMagnetToRD(magnet: string): Promise<string> {
   const form = new URLSearchParams();
   form.append("magnet", magnet);
 
-  const res = await fetch("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", {
+  const res = await rdRequest("/torrents/addMagnet", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${RD_TOKEN}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: form.toString(),
   });
 
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as RDAddMagnetError;
+    const err = (await res.json().catch(() => ({}))) as any;
     throw new Error(`Failed to add magnet: ${err.error || res.status}`);
   }
 
@@ -261,9 +195,7 @@ async function addMagnetToRD(magnet: string): Promise<string> {
 }
 
 async function getTorrentInfo(torrentId: string): Promise<RDTorrentInfo> {
-  const res = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`, {
-    headers: { Authorization: `Bearer ${RD_TOKEN}` },
-  });
+  const res = await rdRequest(`/torrents/info/${torrentId}`);
 
   if (!res.ok) {
     throw new Error(`RD torrents/info failed with ${res.status}`);
@@ -276,33 +208,27 @@ async function selectFileOnRD(torrentId: string, fileId: number): Promise<void> 
   const form = new URLSearchParams();
   form.append("files", String(fileId));
 
-  const res = await fetch(
-    `https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrentId}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${RD_TOKEN}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: form.toString(),
+  const res = await rdRequest(`/torrents/selectFiles/${torrentId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-  );
+    body: form.toString(),
+  });
 
-  // RD may return 204 or 202 (already done)
   if (!(res.status === 204 || res.status === 202)) {
     const text = await res.text().catch(() => "");
     throw new Error(`RD selectFiles failed with ${res.status}${text ? `: ${text}` : ""}`);
   }
 }
 
-async function unrestrictLink(link: string): Promise<string> {
+async function unrestrictLink(link: string): Promise<RDUnrestrictResponse> {
   const form = new URLSearchParams();
   form.append("link", link);
 
-  const res = await fetch("https://api.real-debrid.com/rest/1.0/unrestrict/link", {
+  const res = await rdRequest("/unrestrict/link", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${RD_TOKEN}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: form.toString(),
@@ -313,273 +239,15 @@ async function unrestrictLink(link: string): Promise<string> {
     throw new Error(`RD unrestrict failed: ${data?.error || res.status}`);
   }
 
-  return data.download;
+  return data;
 }
 
-async function preflightStreamUrl(
-  url: string,
-): Promise<{ ok: boolean; status?: number; contentType?: string | null }> {
-  try {
-    // Some CDNs reject range probes but still serve normal GETs.
-    // Try Range first, then fallback to plain GET if needed.
-    const ranged = await fetchWithTimeout(
-      url,
-      {
-        method: "GET",
-        headers: {
-          Range: "bytes=0-1",
-        },
-      },
-      PREFLIGHT_TIMEOUT_MS,
-    );
-
-    const rangedStatus = ranged.status;
-    const rangedType = ranged.headers.get("content-type");
-    const rangedOkStatus = rangedStatus === 206 || rangedStatus === 200;
-    const rangedOkType =
-      !rangedType ||
-      /video|octet-stream|mp2t|x-matroska|quicktime|mpegurl|application\/vnd\.apple\.mpegurl/i.test(
-        rangedType,
-      );
-
-    if (rangedOkStatus && rangedOkType) {
-      return { ok: true, status: rangedStatus, contentType: rangedType };
-    }
-
-    const plain = await fetchWithTimeout(url, { method: "GET" }, PREFLIGHT_TIMEOUT_MS);
-    const plainStatus = plain.status;
-    const plainType = plain.headers.get("content-type");
-    const plainOkStatus = plainStatus === 200 || plainStatus === 206;
-    const plainOkType =
-      !plainType ||
-      /video|octet-stream|mp2t|x-matroska|quicktime|mpegurl|application\/vnd\.apple\.mpegurl/i.test(
-        plainType,
-      );
-
-    return { ok: plainOkStatus && plainOkType, status: plainStatus, contentType: plainType };
-  } catch {
-    return { ok: false };
-  }
-}
-
-async function deleteTorrentBestEffort(torrentId: string): Promise<void> {
-  try {
-    await fetch(`https://api.real-debrid.com/rest/1.0/torrents/delete/${torrentId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${RD_TOKEN}` },
-    });
-  } catch {
-    // no-op
-  }
-}
-
-async function resolveCandidate(
-  candidate: StreamCandidate & { score: number },
-  media: {
-    type: MediaType;
-    season?: number;
-    episode?: number;
-    preferredAudioLanguage?: string;
-  },
-  diagnostics: ResolverDiagnostics,
-): Promise<{
-  streamUrl: string;
-  backupStreams: string[];
-  torrentId: string;
-  selectedFile?: RDTorrentFile;
-} | null> {
-  const attempt: ResolverAttempt = {
-    infoHash: candidate.infoHash,
-    title: candidate.title,
-    score: candidate.score,
-    startedAt: new Date().toISOString(),
-    status: "failed",
-  };
-
-  diagnostics.attempts.push(attempt);
-
-  let torrentId = "";
-
-  try {
-    torrentId = await addMagnetToRD(candidate.magnet);
-    attempt.torrentId = torrentId;
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to add magnet";
-    attempt.errorCode = "RD_ADD_FAIL";
-    attempt.error = message;
-    attempt.endedAt = new Date().toISOString();
-    return null;
-  }
-
-  let selectedFile: RDTorrentFile | null = null;
-
-  try {
-    for (let i = 0; i < RESOLVER_POLL_ATTEMPTS; i++) {
-      const info = await getTorrentInfo(torrentId);
-
-      if (["error", "dead", "magnet_error", "virus"].includes(info?.status as string)) {
-        attempt.errorCode = "RD_STATUS_FAIL";
-        attempt.error = `RD status ${info?.status}`;
-        attempt.endedAt = new Date().toISOString();
-        await deleteTorrentBestEffort(torrentId);
-        return null;
-      }
-
-      const files = (Array.isArray(info?.files) ? info.files : []) as RDTorrentFile[];
-      if (!selectedFile && files.length > 0) {
-        const selection = chooseTargetFileDetailed(files, {
-          type: media.type,
-          season: media.season,
-          episode: media.episode,
-          preferredFileIdx: candidate.fileIdx,
-          preferredAudioLanguage: media.preferredAudioLanguage,
-        });
-        selectedFile = selection.file;
-
-        if (selectedFile) {
-          attempt.selectedFile = {
-            id: selectedFile.id,
-            path: selectedFile.path,
-            bytes: selectedFile.bytes,
-          };
-        }
-      }
-
-      const unselected = files.length ? files.every((f) => (f.selected ?? 0) === 0) : true;
-      const needsSelection =
-        info?.status === "waiting_files_selection" ||
-        (["queued", "downloading"].includes(info?.status as string) && unselected);
-
-      if (needsSelection) {
-        if (!selectedFile) {
-          attempt.errorCode = "RD_SELECT_FAIL";
-          attempt.error = "No playable file could be selected from torrent";
-          attempt.endedAt = new Date().toISOString();
-          await deleteTorrentBestEffort(torrentId);
-          return null;
-        }
-
-        await selectFileOnRD(torrentId, selectedFile.id);
-        await sleep(RESOLVER_POLL_DELAY_MS);
-        continue;
-      }
-
-      if (
-        ["magnet_conversion", "queued", "downloading", "compressing", "uploading"].includes(
-          info?.status as string,
-        )
-      ) {
-        await sleep(RESOLVER_POLL_DELAY_MS);
-        continue;
-      }
-
-      if (info?.status === "downloaded" && Array.isArray(info?.links) && info.links.length > 0) {
-        // Links mapping can be inconsistent across providers; try preferred link first,
-        // then fallback through remaining links until one passes unrestrict+preflight.
-        let preferredLinkIdx = 0;
-        if (selectedFile && Array.isArray(info.files)) {
-          const selected = (info.files as RDTorrentFile[]).filter((f) => (f.selected ?? 0) === 1);
-          const idx = selected.findIndex((f) => f.id === selectedFile!.id);
-          if (idx >= 0 && idx < info.links.length) preferredLinkIdx = idx;
-        }
-
-        const linkOrder = [
-          preferredLinkIdx,
-          ...info.links.map((_, idx) => idx).filter((idx) => idx !== preferredLinkIdx),
-        ];
-
-        let lastUnrestrictError: string | null = null;
-        let lastPreflight: { ok: boolean; status?: number; contentType?: string | null } | undefined;
-        let firstUnrestrictedUrl: string | null = null;
-        const unrestrictedCandidates: string[] = [];
-
-        for (const linkIdx of linkOrder) {
-          const restrictedLink = info.links[linkIdx] as string;
-          let streamUrl = "";
-
-          try {
-            streamUrl = await unrestrictLink(restrictedLink);
-            if (!firstUnrestrictedUrl) firstUnrestrictedUrl = streamUrl;
-            if (!unrestrictedCandidates.includes(streamUrl)) unrestrictedCandidates.push(streamUrl);
-          } catch (e: unknown) {
-            lastUnrestrictError = e instanceof Error ? e.message : "RD unrestrict failed";
-            continue;
-          }
-
-          const preflight = await preflightStreamUrl(streamUrl);
-          lastPreflight = preflight;
-          if (!preflight.ok) {
-            continue;
-          }
-
-          attempt.preflight = preflight;
-          attempt.status = "success";
-          attempt.endedAt = new Date().toISOString();
-
-          return {
-            streamUrl,
-            backupStreams: unrestrictedCandidates.filter((u) => u !== streamUrl),
-            torrentId,
-            selectedFile: selectedFile ?? undefined,
-          };
-        }
-
-        // Important fallback: some hosts block server-side probes (range/plain GET)
-        // while the exact same unrestricted URL is playable in browser/video player.
-        if (firstUnrestrictedUrl) {
-          attempt.preflight = lastPreflight;
-          attempt.status = "success";
-          attempt.endedAt = new Date().toISOString();
-
-          return {
-            streamUrl: firstUnrestrictedUrl,
-            backupStreams: unrestrictedCandidates.filter((u) => u !== firstUnrestrictedUrl),
-            torrentId,
-            selectedFile: selectedFile ?? undefined,
-          };
-        }
-
-        attempt.preflight = lastPreflight;
-        if (lastUnrestrictError) {
-          attempt.errorCode = "RD_UNRESTRICT_FAIL";
-          attempt.error = lastUnrestrictError;
-        } else {
-          attempt.errorCode = "STREAM_PREFLIGHT_FAIL";
-          attempt.error = `Stream preflight failed${lastPreflight?.status ? ` (${lastPreflight.status})` : ""}`;
-        }
-        attempt.endedAt = new Date().toISOString();
-        await deleteTorrentBestEffort(torrentId);
-        return null;
-      }
-
-      await sleep(RESOLVER_POLL_DELAY_MS);
-    }
-
-    attempt.errorCode = "RD_STATUS_FAIL";
-    attempt.error = "RD torrent timed out before downloadable state";
-    attempt.endedAt = new Date().toISOString();
-    await deleteTorrentBestEffort(torrentId);
-    return null;
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed while polling torrent status";
-    attempt.errorCode = "RD_INFO_FAIL";
-    attempt.error = message;
-    attempt.endedAt = new Date().toISOString();
-    await deleteTorrentBestEffort(torrentId);
-    return null;
-  }
-}
-
-async function telemetryLog(diag: ResolverDiagnostics) {
-  // Keep function logs for traceability.
-  console.info("[ARC_STREAM_RESOLVER]", JSON.stringify(diag));
-
-  // Persist to Supabase telemetry table if env is configured.
-  try {
-    await logStreamResolverDiagnostics({ data: diag });
-  } catch (e) {
-    console.warn("[ARC_STREAM_TELEMETRY] failed to persist", e);
-  }
+function normalizeAudioLanguageCode(input?: string): string | undefined {
+  const raw = (input || "").toLowerCase().trim();
+  if (!raw) return undefined;
+  const code = raw.split(/[-_]/)[0];
+  if (!/^[a-z]{2,3}$/.test(code)) return undefined;
+  return code;
 }
 
 const inputSchema = z.object({
@@ -592,165 +260,168 @@ const inputSchema = z.object({
 export const getStreamForMovie = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => inputSchema.parse(d))
   .handler(async ({ data }) => {
-    const watchId = data.watchId;
-    const preferredQuality = data.preferredQuality ?? "auto";
-    const actualClientProfile = data.clientProfile ?? "default";
-    const preferredAudioLanguage = normalizePreferredAudioLanguage(data.preferredAudioLanguage);
-
-    const PROXY_PASS = import.meta.env.VITE_MEDIAFLOW_PROXY_PASSWORD as string | undefined;
-    const shouldUseIOSProxy = actualClientProfile === "ios_safari";
-
-    // iOS playback is routed through MediaFlow transcoding so MKV sources remain playable.
-    const clientProfile = shouldUseIOSProxy ? "default" : actualClientProfile;
-    if (!RD_TOKEN) {
-      return {
-        errorCode: "NO_RDTOKEN" as ResolveErrorCode,
-        error: "Real-Debrid token missing from server config.",
-      };
-    }
-
-    if (!TMDB_API_KEY) {
-      return {
-        errorCode: "NO_TMDBKEY" as ResolveErrorCode,
-        error: "TMDB API key missing from server config.",
-      };
+    const { watchId, preferredAudioLanguage, preferredQuality } = data;
+    
+    if (!RD_TOKEN || !TMDB_API_KEY) {
+      return { error: "Missing server API tokens" };
     }
 
     const parsed = parseWatchId(watchId);
-    const diagnostics: ResolverDiagnostics = {
-      watchId,
-      mediaType: parsed.type,
-      tmdbId: parsed.tmdbId,
-      candidateCount: 0,
-      attempts: [],
-    };
-
+    
     try {
-      const imdbId =
-        parsed.type === "tv"
-          ? await tmdbTVToImdb(parsed.tmdbId)
+      const imdbId = parsed.type === "tv" 
+          ? await tmdbTVToImdb(parsed.tmdbId) 
           : await tmdbMovieToImdb(parsed.tmdbId);
-      diagnostics.imdbId = imdbId;
 
-      const candidates = await fetchTorrentioStreams(
-        imdbId,
-        parsed.type,
-        parsed.season,
-        parsed.episode,
-      );
-      const ranked = rankCandidates(candidates, {
-        type: parsed.type,
-        season: parsed.season,
-        episode: parsed.episode,
-        preferredQuality,
-        preferredAudioLanguage,
-      }).slice(0, RESOLVER_MAX_CANDIDATES);
+      const candidates = await fetchTorrentioStreams(imdbId, parsed.type, parsed.season, parsed.episode);
+      if (!candidates.length) return { error: "No RD+ candidates found for this title." };
 
-      diagnostics.candidateCount = ranked.length;
+      const targetCandidate = candidates[0];
+      const torrentId = await addMagnetToRD(targetCandidate.magnet);
+      
+      const info = await getTorrentInfo(torrentId);
+      const videoFiles = (info.files || []).filter(f => /\.(mkv|mp4|webm|avi)$/i.test(f.path));
+      if (!videoFiles.length) {
+          return { error: "No video files found in torrent" };
+      }
+      const targetFile = videoFiles.sort((a, b) => b.bytes - a.bytes)[0];
+      
+      await selectFileOnRD(torrentId, targetFile.id);
+      
+      await sleep(1500); 
+      const readyInfo = await getTorrentInfo(torrentId);
+      const restrictedLink = readyInfo.links?.[0];
+      if (!restrictedLink) return { error: "Failed to generate RD link" };
 
-      if (!ranked.length) {
-        diagnostics.attempts.push({
-          infoHash: "",
-          title: "",
-          score: 0,
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-          status: "failed",
-          errorCode: "NO_CANDIDATES",
-          error: `No RD+ candidates found for ${imdbId}`,
+      const unrestricted = await unrestrictLink(restrictedLink);
+
+      // --- NEW 2026 ARCHITECTURE LOGIC ---
+      const headers = { Authorization: `Bearer ${RD_TOKEN}` };
+
+      console.log(`[ARC] Successfully unrestricted link. ID: ${unrestricted.id}`);
+
+      // Step A: Fetch Media Infos to map multiplexed audio tracks
+      const infoUrl = `https://api.real-debrid.com/rest/1.0/streaming/mediaInfos/${unrestricted.id}`;
+      const infoRes = await fetch(infoUrl, { headers });
+      
+      if (infoRes.status === 503) {
+         throw new Error("Metadata unavailable for this specific media asset.");
+      }
+      
+      const mediaInfos = await infoRes.json();
+      console.log(`[ARC] Full MediaInfos response:`, JSON.stringify(mediaInfos, null, 2));
+      
+      const targetLang = normalizeAudioLanguageCode(preferredAudioLanguage) || "en";
+      
+      // Fix: Real-Debrid mediaInfos actual structure is { details: { audio: { "1": { lang_iso: "en", ... } } } }
+      // It is not an array of audio tracks like `mediaInfos.audio`.
+      let audioTracksArray: any[] = [];
+      
+      if (mediaInfos.details && mediaInfos.details.audio) {
+        // Convert object to array for easier processing
+        audioTracksArray = Object.entries(mediaInfos.details.audio).map(([id, trackData]: [string, any]) => ({
+          id, // e.g., "1", "2"
+          ...trackData
+        }));
+      } else if (Array.isArray(mediaInfos.audio)) {
+         // Fallback just in case they change it back to an array
+         audioTracksArray = mediaInfos.audio;
+      }
+
+      console.log(`[ARC] Parsed audio tracks array:`, audioTracksArray);
+      console.log(`[ARC] MediaInfos fetched. Target lang: ${targetLang}, Audio tracks:`, audioTracksArray.length);
+
+      // Step B: Intelligent Audio Track Resolution
+      // Priority: 1) Exact requested language 2) English ("eng"|"en") 3) Default track 4) First track
+      let selectedAudioId = null;
+      if (audioTracksArray.length > 0) {
+        console.log(`[ARC] Target language: ${targetLang}, Available tracks:`, audioTracksArray.map((a: any) => ({ id: a.id, lang: a.lang_iso, langAlt: a.lang })));
+        
+        // Normalize the language codes for comparison
+        const normalize = (code: string | undefined) => (code || "").toLowerCase().slice(0, 3);
+        
+        // Match exact requested language (e.g., "en", "eng")
+        const exactMatch = audioTracksArray.find((a: any) => {
+          const iso = normalize(a.lang_iso);
+          const alt = normalize(a.lang);
+          return iso === targetLang || alt === targetLang || iso === `eng` || alt === `eng`;
         });
-        await telemetryLog(diagnostics);
-
-        return {
-          errorCode: "NO_CANDIDATES" as ResolveErrorCode,
-          error: `No streams found for ${imdbId}${parsed.type === "tv" ? ` S${parsed.season}E${parsed.episode}` : ""}.`,
-          diagnostics,
-        };
+        
+        // Match English explicitly
+        const engFallback = audioTracksArray.find((a: any) => {
+          const iso = normalize(a.lang_iso);
+          const alt = normalize(a.lang);
+          return iso === "en" || iso === "eng" || alt === "en" || alt === "eng";
+        });
+        
+        // Match default track
+        const defaultMatch = audioTracksArray.find((a: any) => a.default === true);
+        
+        // Choose best match
+        const bestTrack = exactMatch || engFallback || defaultMatch || audioTracksArray[0];
+        selectedAudioId = bestTrack?.id;
+        console.log(`[ARC] Selected audio track ID: ${selectedAudioId} (target: ${targetLang}, found exact: ${!!exactMatch}, engFallback: ${!!engFallback})`);
       }
 
-      for (const candidate of ranked) {
-        const resolved = await resolveCandidate(
-          candidate,
-          { ...parsed, preferredAudioLanguage },
-          diagnostics,
-        );
-        if (!resolved) continue;
+      // Step C: Fetch Transcode Links for all formats
+      const transcodeUrl = `https://api.real-debrid.com/rest/1.0/streaming/transcode/${unrestricted.id}`;
+      const transcodeRes = await fetch(transcodeUrl, { headers });
+      
+      if (!transcodeRes.ok) {
+          throw new Error(`Transcode API failed with status ${transcodeRes.status}`);
+      }
+      
+      const transcodeData = await transcodeRes.json();
+      console.log(`[ARC] Transcode data fetched:`, JSON.stringify(transcodeData, null, 2));
 
-        diagnostics.selected = {
-          infoHash: candidate.infoHash,
-          torrentId: resolved.torrentId,
-          selectedFile: resolved.selectedFile
-            ? {
-                id: resolved.selectedFile.id,
-                path: resolved.selectedFile.path,
-                bytes: resolved.selectedFile.bytes,
-              }
-            : undefined,
-        };
+      let dashUrl = transcodeData.dash?.full || null;
+      let hlsUrl = transcodeData.apple?.full || null;
+      let mp4Url = transcodeData.liveMP4?.full || null;
+      let h264WebMUrl = transcodeData.h264WebM?.full || null;
 
-        await telemetryLog(diagnostics);
-
-        let finalStreamUrl = resolved.streamUrl;
-        let finalBackupStreams = resolved.backupStreams;
-
-        // iOS Safari cannot play MKV directly. Route iOS streams through MediaFlow transcoding.
-        if (shouldUseIOSProxy) {
-          const proxyWrappedPrimary = buildMediaFlowStreamUrl(resolved.streamUrl, PROXY_PASS);
-          const proxyWrappedBackups = resolved.backupStreams.map((b) =>
-            buildMediaFlowStreamUrl(b, PROXY_PASS),
-          );
-
-          finalStreamUrl = proxyWrappedPrimary;
-          finalBackupStreams = uniqueUrls([
-            ...proxyWrappedBackups,
-            resolved.streamUrl,
-            ...resolved.backupStreams,
-          ]);
-        }
-
-        return {
-          streamUrl: finalStreamUrl,
-          backupStreams: finalBackupStreams,
-          filename: resolved.selectedFile ? resolved.selectedFile.path.split('/').pop() : "",
-          imdbId,
-          mediaType: parsed.type,
-          season: parsed.season,
-          episode: parsed.episode,
-          selectedQuality: preferredQuality,
-          clientProfile: actualClientProfile,
-          diagnostics,
-        };
+      // Ensure we have at least one usable URL
+      if (!dashUrl && !hlsUrl && !mp4Url && !h264WebMUrl) {
+        console.error("[ARC] No valid transcode formats available:", JSON.stringify(transcodeData));
+        throw new Error("Transcode manifests are unavailable for this content.");
+      }
+      
+      // Step D: Inject the resolved audio track ID into the Real-Debrid HLS/DASH URL structure
+      if (selectedAudioId) {
+        if (dashUrl) dashUrl = dashUrl.replace('/none/', `/${selectedAudioId}/`);
+        if (hlsUrl) hlsUrl = hlsUrl.replace('/none/', `/${selectedAudioId}/`);
+        if (mp4Url) mp4Url = mp4Url.replace('/none/', `/${selectedAudioId}/`);
+        if (h264WebMUrl) h264WebMUrl = h264WebMUrl.replace('/none/', `/${selectedAudioId}/`);
       }
 
+      // Determine preferred format based on client profile or default to dash
+      // Usually, iOS needs HLS (apple), while desktop/Android can do DASH
+      const isIOS = data.clientProfile === "ios_safari";
+      let preferredFormat = "dash";
+      if (isIOS && hlsUrl) {
+         preferredFormat = "hls";
+      } else if (!dashUrl && hlsUrl) {
+         preferredFormat = "hls";
+      } else if (!dashUrl && !hlsUrl && mp4Url) {
+         preferredFormat = "mp4";
+      }
 
-
-      return {
-        errorCode: "ALL_CANDIDATES_FAILED" as ResolveErrorCode,
-        error: "Could not resolve a playable stream after trying multiple sources.",
-        diagnostics,
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unknown streaming error.";
-      const errorCode: ResolveErrorCode = message.includes("No IMDB ID")
-        ? "TMDB_IMDB_MISSING"
-        : "UNKNOWN";
-
-      diagnostics.attempts.push({
-        infoHash: "",
-        title: "",
-        score: 0,
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        status: "failed",
-        errorCode,
-        error: message,
-      });
-      await telemetryLog(diagnostics);
+      console.log(`[ARC] Final URLs -> DASH: ${dashUrl}, HLS: ${hlsUrl}, MP4: ${mp4Url}`);
+      console.log(`[ARC] Preferred format: ${preferredFormat}`);
 
       return {
-        errorCode,
-        error: message,
-        diagnostics,
+        streamUrl: (preferredFormat === "dash" ? dashUrl : preferredFormat === "hls" ? hlsUrl : mp4Url) || hlsUrl || mp4Url || dashUrl || h264WebMUrl, // Fallback if preferred is somehow null
+        dashUrl,
+        hlsUrl,
+        mp4Url,
+        h264WebMUrl,
+        preferredFormat,
+        availableAudioTracks: audioTracksArray,
+        activeAudioTrackId: selectedAudioId,
+        filename: targetFile.path.split('/').pop() || "",
       };
+
+    } catch (err: any) {
+      console.error(`[ARC] Resolver error:`, err);
+      return { error: err.message };
     }
   });
