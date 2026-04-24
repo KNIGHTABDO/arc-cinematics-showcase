@@ -333,8 +333,8 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
       const subLang = String(s?.language || s?.lang || "").toLowerCase();
       const subTokens = tokenizeRelease(name);
 
-      // Exact match bonus
-      if (isExact) score += 520;
+      // Exact match bonus (reduced to let community subs win)
+      if (isExact) score += 50;
 
       // Token overlap against stream release and title fingerprints.
       const releaseOverlap = tokenOverlapScore(releaseTokens, subTokens);
@@ -391,11 +391,14 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
       }
 
       // Bonus for OpenSubtitles Rating/Downloads (g)
-      // We multiply heavily by 100 so that a highly rated community subtitle (e.g. rating 7 = +700)
-      // successfully outranks automated exact-filename matches (+500), because community validation is superior.
+      // SubDL filename matching can score up to 1500+. We multiply ratings by 500
+      // so a community-rated subtitle (e.g. rating 4 = 2000) easily dominates the list.
       if (s?.g) {
         const pop = parseInt(s.g, 10);
-        if (!isNaN(pop)) score += pop * 80;
+        if (!isNaN(pop)) {
+           score += pop * 500;
+           if (pop > 0) score += 1000; // Flat bonus for having any positive community rating
+        }
       }
 
       return score;
@@ -429,7 +432,7 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
             const subtitles = Array.isArray((payload as any)?.subtitles) ? (payload as any).subtitles : [];
             subdlTracks = subtitles
               .map((s: any) => ({
-                label: `⚡ ${s?.release_name || s?.language || "Synced"}`,
+                label: s?.release_name || s?.language || "Synced",
                 lang: String(s?.language || s?.lang || ""),
                 url: normalizeSubtitleUrl(String(s?.url || "")),
                 _score: scoreTrack(s, true),
@@ -459,7 +462,7 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
             .filter((s: any) => isTargetLang(s?.lang || ""))
             .map((s: any) => {
               const rating = parseInt(s?.g, 10) || 0;
-              const labelSuffix = rating > 0 ? ` 🌟 ${rating}` : "";
+              const labelSuffix = rating > 0 ? ` ★ ${rating}` : "";
               return {
                 label: `${String(s?.lang || "Unknown")}${labelSuffix}`,
                 lang: String(s?.lang || ""),

@@ -602,47 +602,10 @@ function WatchPage() {
   }, [streamUrl, refreshAudioTracks]);
 
   // Avoid infinite spinner by failing over if stream does not start within a deadline.
-  useEffect(() => {
-    if (!streamUrl) return;
-
-    if (stallTimeout.current) clearTimeout(stallTimeout.current);
-
-    stallTimeout.current = setTimeout(() => {
-      const v = videoRef.current;
-      if (!v || streamReady) return;
-
-      const hasStarted = v.currentTime > 0.25;
-      if (hasStarted) return;
-
-      setError("Stream startup timed out. The player could not load the video in time.");
-    }, 18000);
-
-    return () => {
-      if (stallTimeout.current) clearTimeout(stallTimeout.current);
-    };
-  }, [streamUrl, streamReady]);
+  // (Removed to let the player naturally buffer)
 
   // Detect post-start buffering stalls and fail over instead of spinning forever.
-  useEffect(() => {
-    if (!streamUrl || !streamReady || !buffering || !playing) return;
-
-    if (rebufferTimeout.current) clearTimeout(rebufferTimeout.current);
-
-    const startTime = videoRef.current?.currentTime || 0;
-    rebufferTimeout.current = setTimeout(() => {
-      const v = videoRef.current;
-      if (!v) return;
-
-      const progressed = (v.currentTime || 0) - startTime > 0.2;
-      if (!buffering || progressed) return;
-
-      setError("Stream stalled while buffering. Please try another quality or title.");
-    }, 12000);
-
-    return () => {
-      if (rebufferTimeout.current) clearTimeout(rebufferTimeout.current);
-    };
-  }, [streamUrl, streamReady, buffering, playing]);
+  // (Removed to prevent arbitrary drops)
 
   useEffect(() => {
     const profileId = localStorage.getItem("arc_active_profile");
@@ -662,30 +625,16 @@ function WatchPage() {
     else restoreQuery = restoreQuery.is("episode", null);
 
     restoreQuery.maybeSingle().then(({ data }) => {
-      if (data?.progress && data.progress > 10) {
-        setSavedProgress(data.progress);
+      if (data?.progress) {
+        const progressInSeconds = data.progress > 1000 ? data.progress / 1000 : data.progress;
+        if (progressInSeconds > 10) {
+          setSavedProgress(progressInSeconds);
+        }
       }
     });
   }, [id, parsed.tmdbId, parsed.type, parsed.season, parsed.episode]);
 
-  // Restore progress after stream starts playing
-  useEffect(() => {
-    if (!savedProgress || hasRestoredProgress || !videoRef.current) return;
-    if (!streamReady) return;
-
-    const v = videoRef.current;
-    if (!v || v.currentTime > 0) return;
-
-    const timer = setTimeout(() => {
-      if (v && savedProgress > 0 && v.currentTime === 0) {
-        console.log(`[ARC] Resuming from ${savedProgress}s`);
-        v.currentTime = savedProgress;
-        setHasRestoredProgress(true);
-      }
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [savedProgress, streamReady, hasRestoredProgress]);
+  // AdvancedPlayer handles initial seeking natively
 
   // Save progress every 10 seconds while playing
   useEffect(() => {
@@ -702,8 +651,8 @@ function WatchPage() {
         media_type: parsed.type,
         season: parsed.season || null,
         episode: parsed.episode || null,
-        progress: parseFloat(v.currentTime.toFixed(3)),
-        duration: parseFloat(v.duration.toFixed(3)),
+        progress: Math.floor(v.currentTime * 1000),
+        duration: Math.floor(v.duration * 1000),
         updated_at: new Date().toISOString(),
       };
 
@@ -744,7 +693,7 @@ function WatchPage() {
       const v = videoRef.current;
       if (!v || v.paused || v.ended) return;
       saveProgress();
-    }, 10000);
+    }, 3000);
 
     const onPause = () => saveProgress();
     const onBeforeUnload = () => saveProgress();
@@ -954,6 +903,7 @@ function WatchPage() {
       <AdvancedPlayer
         ref={videoRef}
         autoPlay
+        startTime={savedProgress || 0}
         className="h-full w-full object-contain"
         streamUrl={streamUrl || ""}
         streamUrls={streamUrls}
@@ -1322,45 +1272,7 @@ function WatchPage() {
                 </div>
               )}
             </div>
-            {/* Format/Server switcher */}
-            <div className="relative">
-              <button
-                onClick={() => setShowFormatMenu(!showFormatMenu)}
-                className="text-white/70 hover:text-white transition text-xs border border-white/20 rounded-md px-2 py-1"
-                title="Format/Server"
-              >
-                {selectedFormat.toUpperCase()}
-              </button>
-              {showFormatMenu && (
-                <div className="absolute bottom-full left-0 mb-2 bg-black/90 border border-white/10 rounded-xl p-2 min-w-[140px] backdrop-blur-xl z-[100]">
-                  {(["dash", "hls", "mp4"] as const).map((fmt) => {
-                    const url = streamUrls[`${fmt}Url`];
-                    const isAvailable = !!url;
-                    return (
-                      <button
-                        key={fmt}
-                        onClick={() => {
-                          setShowFormatMenu(false);
-                          if (isAvailable && fmt !== selectedFormat) {
-                            switchFormat(fmt);
-                          }
-                        }}
-                        disabled={!isAvailable}
-                        className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${
-                          selectedFormat === fmt 
-                            ? "text-arc-accent bg-arc-accent/10" 
-                            : isAvailable 
-                              ? "text-white/70 hover:bg-white/5" 
-                              : "text-white/20 cursor-not-allowed"
-                        }`}
-                      >
-                        {fmt.toUpperCase()}{!isAvailable && " (unavailable)"}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {/* Format/Server switcher removed */}
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">

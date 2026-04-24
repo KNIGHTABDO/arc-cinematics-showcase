@@ -363,58 +363,46 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         console.log(`[ARC] Selected audio track ID: ${selectedAudioId} (target: ${targetLang}, found exact: ${!!exactMatch}, engFallback: ${!!engFallback})`);
       }
 
-      // Step C: Fetch Transcode Links for all formats
-      const transcodeUrl = `https://api.real-debrid.com/rest/1.0/streaming/transcode/${unrestricted.id}`;
-      const transcodeRes = await fetch(transcodeUrl, { headers });
+      // Step C: Match Requested Quality
+      const availableVals = Object.values(mediaInfos.availableQualities || {}) as string[];
+      let qualityValue = availableVals.includes("full") ? "full" : availableVals[0] || "full";
       
-      if (!transcodeRes.ok) {
-          throw new Error(`Transcode API failed with status ${transcodeRes.status}`);
-      }
-      
-      const transcodeData = await transcodeRes.json();
-      console.log(`[ARC] Transcode data fetched:`, JSON.stringify(transcodeData, null, 2));
-
-      let dashUrl = transcodeData.dash?.full || null;
-      let hlsUrl = transcodeData.apple?.full || null;
-      let mp4Url = transcodeData.liveMP4?.full || null;
-      let h264WebMUrl = transcodeData.h264WebM?.full || null;
-
-      // Ensure we have at least one usable URL
-      if (!dashUrl && !hlsUrl && !mp4Url && !h264WebMUrl) {
-        console.error("[ARC] No valid transcode formats available:", JSON.stringify(transcodeData));
-        throw new Error("Transcode manifests are unavailable for this content.");
+      if (preferredQuality && preferredQuality !== "auto") {
+        const qualityMap: Record<string, string[]> = {
+          "2160": ["2160p_16mbps", "2160P", "2160p", "full"],
+          "1080": ["1080p_8mbps", "1080p_4mbps", "1080P", "1080p"],
+          "720": ["720p_4mbps", "720p_2mbps", "720P", "720p"],
+          "480": ["480p_2mbps", "480p_1mbps", "480P", "480p"]
+        };
+        const targets = qualityMap[preferredQuality] || [];
+        for (const t of targets) {
+           if (availableVals.includes(t)) {
+              qualityValue = t;
+              break;
+           }
+        }
       }
       
-      // Step D: Inject the resolved audio track ID into the Real-Debrid HLS/DASH URL structure
-      if (selectedAudioId) {
-        if (dashUrl) dashUrl = dashUrl.replace('/none/', `/${selectedAudioId}/`);
-        if (hlsUrl) hlsUrl = hlsUrl.replace('/none/', `/${selectedAudioId}/`);
-        if (mp4Url) mp4Url = mp4Url.replace('/none/', `/${selectedAudioId}/`);
-        if (h264WebMUrl) h264WebMUrl = h264WebMUrl.replace('/none/', `/${selectedAudioId}/`);
+      console.log(`[ARC] Selected quality value: ${qualityValue} (from preferred: ${preferredQuality})`);
+
+      // Step D: Construct Stream URL using modelUrl for DASH
+      if (!mediaInfos.modelUrl) {
+         throw new Error("No modelUrl provided by Real-Debrid for this content.");
       }
 
-      // Determine preferred format based on client profile or default to dash
-      // Usually, iOS needs HLS (apple), while desktop/Android can do DASH
-      const isIOS = data.clientProfile === "ios_safari";
-      let preferredFormat = "dash";
-      if (isIOS && hlsUrl) {
-         preferredFormat = "hls";
-      } else if (!dashUrl && hlsUrl) {
-         preferredFormat = "hls";
-      } else if (!dashUrl && !hlsUrl && mp4Url) {
-         preferredFormat = "mp4";
-      }
+      const streamUrl = mediaInfos.modelUrl
+         .replace('{audio}', selectedAudioId || 'none')
+         .replace('{subtitles}', 'none')
+         .replace('{audioCodec}', 'aac')
+         .replace('{quality}', qualityValue)
+         .replace('{format}', 'mpd');
 
-      console.log(`[ARC] Final URLs -> DASH: ${dashUrl}, HLS: ${hlsUrl}, MP4: ${mp4Url}`);
-      console.log(`[ARC] Preferred format: ${preferredFormat}`);
+      console.log(`[ARC] Final Constructed DASH URL: ${streamUrl}`);
 
       return {
-        streamUrl: (preferredFormat === "dash" ? dashUrl : preferredFormat === "hls" ? hlsUrl : mp4Url) || hlsUrl || mp4Url || dashUrl || h264WebMUrl, // Fallback if preferred is somehow null
-        dashUrl,
-        hlsUrl,
-        mp4Url,
-        h264WebMUrl,
-        preferredFormat,
+        streamUrl,
+        dashUrl: streamUrl,
+        preferredFormat: "dash",
         availableAudioTracks: audioTracksArray,
         activeAudioTrackId: selectedAudioId,
         filename: targetFile.path.split('/').pop() || "",
