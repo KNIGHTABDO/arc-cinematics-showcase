@@ -102,7 +102,7 @@ function DiscoverPage() {
             >
               All
             </button>
-            {genres.map(g => (
+            {genres.map((g) => (
               <button
                 key={g.id}
                 onClick={() => setActiveGenre(g.id.toString())}
@@ -130,13 +130,24 @@ function DiscoverPage() {
                   <div className="relative rounded-xl overflow-hidden border border-white/5 bg-arc-surface-2 transition-transform group-hover:scale-[1.03] group-hover:border-arc-accent/30">
                     <div
                       className="aspect-[2/3] bg-cover bg-center"
-                      style={{ backgroundImage: item.poster_path ? `url(https://image.tmdb.org/t/p/w342${item.poster_path})` : "none", backgroundColor: "var(--arc-surface)" }}
+                      style={{
+                        backgroundImage: item.poster_path
+                          ? `url(https://image.tmdb.org/t/p/w342${item.poster_path})`
+                          : "none",
+                        backgroundColor: "var(--arc-surface)",
+                      }}
                     />
                     <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 to-transparent p-3">
-                      <p className="text-sm font-semibold text-white truncate">{item.title || item.name}</p>
+                      <p className="text-sm font-semibold text-white truncate">
+                        {item.title || item.name}
+                      </p>
                       <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs text-arc-accent">★ {item.vote_average?.toFixed(1)}</span>
-                        <span className="text-xs text-arc-muted">{(item.release_date || item.first_air_date || "").substring(0, 4)}</span>
+                        <span className="text-xs text-arc-accent">
+                          ★ {item.vote_average?.toFixed(1)}
+                        </span>
+                        <span className="text-xs text-arc-muted">
+                          {(item.release_date || item.first_air_date || "").substring(0, 4)}
+                        </span>
                       </div>
                     </div>
                   </div>

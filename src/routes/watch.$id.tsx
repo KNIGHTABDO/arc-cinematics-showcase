@@ -91,22 +91,11 @@ function WatchPage() {
 
   const parsed = parseWatchId(id);
 
-  const [streamUrls, setStreamUrls] = useState<{
-    dashUrl: string | null;
-    hlsUrl: string | null;
-    mp4Url: string | null;
-    originalUrl: string | null;
-  }>({ dashUrl: null, hlsUrl: null, mp4Url: null, originalUrl: null });
-  const [preferredFormat, setPreferredFormat] = useState<"dash" | "hls" | "mp4" | "original">(
-    "hls",
-  );
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [streamFilename, setStreamFilename] = useState<string>("");
   /** Stable RD hoster URL returned by getStreamForMovie. Used for retry without re-polling. */
   const [rdHostLink, setRdHostLink] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
-  const [backupStreams, setBackupStreams] = useState<string[]>([]);
-  const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
   const [quality, setQuality] = useState<"auto" | "2160" | "1080" | "720" | "480">("auto");
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState<string>("Loading...");
@@ -131,8 +120,6 @@ function WatchPage() {
   const [offsetMs, setOffsetMs] = useState(0);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
-  const [showFormatMenu, setShowFormatMenu] = useState(false);
-  const [selectedFormat, setSelectedFormat] = useState<"dash" | "hls" | "mp4" | "original">("hls");
   const [savedProgress, setSavedProgress] = useState<number | null>(null);
   const [hasRestoredProgress, setHasRestoredProgress] = useState(false);
   const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
@@ -213,7 +200,12 @@ function WatchPage() {
         setStreamLoadStatus("Locating stream on Real-Debrid…");
 
         const torrentRes: any = await getStreamForMovie({
-          data: { watchId: id, preferredQuality: quality, clientProfile },
+          data: {
+            watchId: id,
+            preferredQuality: quality,
+            clientProfile,
+            preferredAudioLanguage: preferredAudioLanguage.slice(0, 2) || undefined,
+          },
         });
         if (cancelled) return;
 
@@ -292,26 +284,11 @@ function WatchPage() {
           throw new Error(playbackRes.error);
         }
 
-        if (playbackRes.streamUrl || playbackRes.hlsUrl || playbackRes.mp4Url) {
-          setStreamUrls({
-            dashUrl: playbackRes.dashUrl ?? null,
-            hlsUrl: playbackRes.hlsUrl ?? null,
-            mp4Url: playbackRes.mp4Url ?? null,
-            originalUrl: playbackRes.originalUrl ?? null,
-          });
-          setPreferredFormat(playbackRes.preferredFormat || "hls");
-
-          // Pick the best URL based on the format decision (MP4 for speed, HLS for safety)
-          const primaryUrl =
-            playbackRes.preferredFormat === "hls"
-              ? playbackRes.hlsUrl || playbackRes.streamUrl
-              : playbackRes.mp4Url || playbackRes.streamUrl;
-          setStreamUrl(primaryUrl ?? null);
+        if (playbackRes.streamUrl) {
+          setStreamUrl(playbackRes.streamUrl);
 
           setStreamFilename(playbackRes.filename || torrentRes.filename || "");
           setBitrateWarning(playbackRes.bitrateWarning ?? null);
-          setBackupStreams([]);
-          setCurrentStreamIndex(0);
           setStreamReady(false);
           setAudioTracks([]);
           setActiveAudioTrackIdx(null);
@@ -455,36 +432,6 @@ function WatchPage() {
     };
   }, [activeSub, offsetMs]);
 
-  const switchFormat = useCallback(
-    (format: "dash" | "hls" | "mp4" | "original") => {
-      const url = streamUrls[`${format}Url`];
-      if (!url) return;
-
-      console.log(`[ARC] Switching to format: ${format}`);
-      setSelectedFormat(format);
-      setPreferredFormat(format);
-      setStreamUrl(url);
-      setStreamReady(false);
-      setBuffering(true);
-      setHasRestoredProgress(false);
-    },
-    [streamUrls],
-  );
-
-  const switchToNextStream = useCallback(() => {
-    const next = backupStreams[currentStreamIndex];
-    if (!next) return false;
-
-    setCurrentStreamIndex((idx) => idx + 1);
-    setStreamReady(false);
-    setBuffering(true);
-    setStreamUrl(next);
-    setAudioTracks([]);
-    setActiveAudioTrackIdx(null);
-    hasUserSelectedAudioTrack.current = false;
-    return true;
-  }, [backupStreams, currentStreamIndex]);
-
   /**
    * Re-unrestricts the stored rdHostLink to get a fresh CDN URL without re-polling
    * the full torrent resolution. Called when playback fails (403/404/timeout errors).
@@ -495,7 +442,6 @@ function WatchPage() {
       setError(null);
       setStreamUrl(null);
       setRdHostLink(null);
-      setStreamUrls({ dashUrl: null, hlsUrl: null, mp4Url: null, originalUrl: null });
       return;
     }
     setError(null);
@@ -519,20 +465,8 @@ function WatchPage() {
         setError(playbackRes.error);
         return;
       }
-      if (playbackRes.streamUrl || playbackRes.hlsUrl || playbackRes.mp4Url) {
-        setStreamUrls({
-          dashUrl: playbackRes.dashUrl ?? null,
-          hlsUrl: playbackRes.hlsUrl ?? null,
-          mp4Url: playbackRes.mp4Url ?? null,
-          originalUrl: playbackRes.originalUrl ?? null,
-        });
-        setPreferredFormat(playbackRes.preferredFormat || "hls");
-        // Same rule in retryPlayback: use preferred format
-        const primaryUrl =
-          playbackRes.preferredFormat === "hls"
-            ? playbackRes.hlsUrl || playbackRes.streamUrl
-            : playbackRes.mp4Url || playbackRes.streamUrl;
-        setStreamUrl(primaryUrl ?? null);
+      if (playbackRes.streamUrl) {
+        setStreamUrl(playbackRes.streamUrl);
         setBitrateWarning(playbackRes.bitrateWarning ?? null);
         setStreamFilename(playbackRes.filename || "");
         setAudioTracks([]);
@@ -1116,11 +1050,9 @@ function WatchPage() {
       <AdvancedPlayer
         ref={videoRef}
         autoPlay
-        preferredFormat={preferredFormat}
         startTime={savedProgress || 0}
         className="h-full w-full object-contain"
-        streamUrl={streamUrl || ""}
-        streamUrls={streamUrls}
+        url={streamUrl || ""}
         subtitleBlobUrl={activeSubVttUrl}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
@@ -1485,8 +1417,6 @@ function WatchPage() {
                         if (q !== quality) {
                           setQuality(q);
                           setStreamUrl(null);
-                          setBackupStreams([]);
-                          setCurrentStreamIndex(0);
                           setStreamReady(false);
                           setBuffering(true);
                         }
@@ -1496,35 +1426,6 @@ function WatchPage() {
                       {q === "auto" ? "Auto" : `${q}p`}
                     </button>
                   ))}
-
-                  {/* Format Switching */}
-                  <div className="mt-2 pt-2 border-t border-white/10">
-                    <div className="px-3 py-1 text-[10px] text-arc-muted uppercase tracking-wider font-bold">
-                      Format
-                    </div>
-                    {(["hls", "mp4", "original"] as const).map((f) => {
-                      const url = streamUrls[`${f}Url`];
-                      if (!url && f !== "hls") return null;
-                      return (
-                        <button
-                          key={f}
-                          onClick={() => {
-                            setShowQualityMenu(false);
-                            if (f !== selectedFormat) {
-                              switchFormat(f);
-                            }
-                          }}
-                          className={`w-full text-left px-3 py-2 text-sm rounded-lg transition ${selectedFormat === f ? "text-arc-accent bg-arc-accent/10" : "text-white/70 hover:bg-white/5"}`}
-                        >
-                          {f === "hls"
-                            ? "HLS (Transcoded)"
-                            : f === "mp4"
-                              ? "MP4 (Remuxed)"
-                              : "Original (MKV/Source)"}
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
               )}
             </div>

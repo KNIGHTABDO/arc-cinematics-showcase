@@ -37,7 +37,7 @@ export function Navbar() {
             duration: 0.8,
             ease: "power3.out",
             delay: 0.05,
-          }
+          },
         );
       }
     });
@@ -53,7 +53,11 @@ export function Navbar() {
       )}
     >
       <div className="flex h-full items-center justify-between px-[5vw]">
-        <Link to="/browse" {...linkCursor} className="font-display text-2xl font-extrabold tracking-tight">
+        <Link
+          to="/browse"
+          {...linkCursor}
+          className="font-display text-2xl font-extrabold tracking-tight"
+        >
           <span className="text-arc-text">A</span>
           <span className="relative">
             R
@@ -108,29 +112,49 @@ export function Navbar() {
               Open search →
             </Link>
           </div>
-          
+
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button {...linkCursor} className="text-xs font-semibold text-arc-text/80 transition hover:text-arc-accent uppercase px-3 py-1 border border-white/10 rounded-full">
-                {profile?.ui_language || 'EN'}
+              <button
+                {...linkCursor}
+                className="text-xs font-semibold text-arc-text/80 transition hover:text-arc-accent uppercase px-3 py-1 border border-white/10 rounded-full"
+              >
+                {profile?.ui_language || "EN"}
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
-              <DropdownMenu.Content className="z-50 min-w-[120px] rounded-xl border border-white/10 bg-arc-surface-2 p-1 shadow-xl arc-glass" sideOffset={8}>
-                <DropdownMenu.Item onClick={() => updateSettings({ ui_language: 'en', tmdb_language: 'en-US' })} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text">
+              <DropdownMenu.Content
+                className="z-50 min-w-[120px] rounded-xl border border-white/10 bg-arc-surface-2 p-1 shadow-xl arc-glass"
+                sideOffset={8}
+              >
+                <DropdownMenu.Item
+                  onClick={() => updateSettings({ ui_language: "en", tmdb_language: "en-US" })}
+                  className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text"
+                >
                   English
                 </DropdownMenu.Item>
-                <DropdownMenu.Item onClick={() => updateSettings({ ui_language: 'ar', tmdb_language: 'ar-SA' })} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text">
+                <DropdownMenu.Item
+                  onClick={() => updateSettings({ ui_language: "ar", tmdb_language: "ar-SA" })}
+                  className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text"
+                >
                   العربية
                 </DropdownMenu.Item>
-                <DropdownMenu.Item onClick={() => updateSettings({ ui_language: 'fr', tmdb_language: 'fr-FR' })} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text">
+                <DropdownMenu.Item
+                  onClick={() => updateSettings({ ui_language: "fr", tmdb_language: "fr-FR" })}
+                  className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text"
+                >
                   Français
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
 
-          <Link to="/" {...linkCursor} className="text-arc-text/80 hover:text-arc-text" aria-label="Notifications">
+          <Link
+            to="/"
+            {...linkCursor}
+            className="text-arc-text/80 hover:text-arc-text"
+            aria-label="Notifications"
+          >
             <BellIcon />
           </Link>
           <DropdownMenu.Root>
@@ -143,23 +167,63 @@ export function Navbar() {
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
-              <DropdownMenu.Content className="z-50 min-w-[160px] rounded-xl border border-white/10 bg-arc-surface-2 p-1 shadow-xl arc-glass" sideOffset={8} align="end">
+              <DropdownMenu.Content
+                className="z-50 min-w-[160px] rounded-xl border border-white/10 bg-arc-surface-2 p-1 shadow-xl arc-glass"
+                sideOffset={8}
+                align="end"
+              >
                 <Link to="/history" className="block focus:outline-none">
                   <DropdownMenu.Item className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text flex items-center gap-2">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
                     Watch History
                   </DropdownMenu.Item>
                 </Link>
                 <Link to="/settings" className="block focus:outline-none">
                   <DropdownMenu.Item className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text flex items-center gap-2">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="3" />
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+                    </svg>
                     Settings
                   </DropdownMenu.Item>
                 </Link>
                 <div className="my-1 h-px bg-white/10" />
                 <Link to="/profiles" className="block focus:outline-none">
                   <DropdownMenu.Item className="cursor-pointer rounded-lg px-3 py-2 text-sm text-arc-text/80 outline-none transition hover:bg-arc-accent/20 hover:text-arc-text flex items-center gap-2">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
                     Switch Profile
                   </DropdownMenu.Item>
                 </Link>
@@ -174,7 +238,16 @@ export function Navbar() {
 
 function SearchIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="11" cy="11" r="7" />
       <path d="m21 21-4.3-4.3" />
     </svg>
@@ -183,7 +256,16 @@ function SearchIcon() {
 
 function BellIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
       <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
     </svg>

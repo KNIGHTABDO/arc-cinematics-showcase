@@ -19,7 +19,7 @@ function Register() {
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
-    
+
     const ctx = gsap.context(() => {
       if (containerRef.current) {
         gsap.fromTo(
@@ -31,7 +31,7 @@ function Register() {
             duration: 0.8,
             stagger: 0.1,
             ease: "power3.out",
-          }
+          },
         );
       }
     }, containerRef);
@@ -59,16 +59,25 @@ function Register() {
   };
 
   return (
-    <main ref={containerRef} className="flex min-h-screen items-center justify-center bg-arc-void px-6">
-      <Link to="/" className="absolute left-8 top-8 font-display text-2xl font-extrabold fade-up" {...linkCursor}>
+    <main
+      ref={containerRef}
+      className="flex min-h-screen items-center justify-center bg-arc-void px-6"
+    >
+      <Link
+        to="/"
+        className="absolute left-8 top-8 font-display text-2xl font-extrabold fade-up"
+        {...linkCursor}
+      >
         ARC
       </Link>
-      
+
       <div className="w-full max-w-md">
         <h1 className="mb-2 font-display text-4xl font-extrabold tracking-tight text-arc-text fade-up">
           Create Account
         </h1>
-        <p className="mb-8 text-arc-text/60 fade-up">Join ARC to start streaming cinematic masterpieces.</p>
+        <p className="mb-8 text-arc-text/60 fade-up">
+          Join ARC to start streaming cinematic masterpieces.
+        </p>
 
         <form onSubmit={handleRegister} className="flex flex-col gap-5">
           <div className="fade-up">

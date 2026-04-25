@@ -6,7 +6,11 @@ export function Pill({
   active,
   className,
   ...props
-}: { children: ReactNode; active?: boolean; className?: string } & React.HTMLAttributes<HTMLDivElement>) {
+}: {
+  children: ReactNode;
+  active?: boolean;
+  className?: string;
+} & React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(

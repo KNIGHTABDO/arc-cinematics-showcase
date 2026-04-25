@@ -70,13 +70,15 @@ const translations: Record<string, Record<string, string>> = {
     "settings.switchProfile": "Switch Profile",
     "settings.done": "Done",
     "settings.accountManagement": "Account Management",
-    "settings.accountManagementDesc": "You can update your password or permanently delete your account here. Actions are irreversible.",
+    "settings.accountManagementDesc":
+      "You can update your password or permanently delete your account here. Actions are irreversible.",
     "settings.newPassword": "New Password",
     "settings.subdlApiKey": "SubDL API Key (Optional)",
     "settings.enterNewPassword": "Enter new password",
     "settings.update": "Update",
     "settings.deleteAccount": "Delete Account",
-    "settings.deleteConfirm": "Are you absolutely sure you want to delete your account? This action cannot be undone.",
+    "settings.deleteConfirm":
+      "Are you absolutely sure you want to delete your account? This action cannot be undone.",
     "settings.errorUpdatePass": "Error updating password: ",
     "settings.passUpdated": "Password updated successfully!",
     "settings.errorDelete": "Error deleting account: ",
@@ -85,7 +87,7 @@ const translations: Record<string, Record<string, string>> = {
     "history.clearConfirm": "Are you sure you want to clear your entire watch history?",
     "history.empty": "Your watch history is empty.",
     "history.discover": "Discover titles",
-    "history.remove": "Remove from history"
+    "history.remove": "Remove from history",
   },
   ar: {
     "nav.home": "الرئيسية",
@@ -157,13 +159,15 @@ const translations: Record<string, Record<string, string>> = {
     "settings.switchProfile": "تبديل الملف الشخصي",
     "settings.done": "تم",
     "settings.accountManagement": "إدارة الحساب",
-    "settings.accountManagementDesc": "يمكنك تحديث كلمة المرور أو حذف حسابك نهائياً من هنا. هذه الإجراءات لا يمكن التراجع عنها.",
+    "settings.accountManagementDesc":
+      "يمكنك تحديث كلمة المرور أو حذف حسابك نهائياً من هنا. هذه الإجراءات لا يمكن التراجع عنها.",
     "settings.newPassword": "كلمة المرور الجديدة",
     "settings.subdlApiKey": "مفتاح واجهة برمجة التطبيقات SubDL (إختياري)",
     "settings.enterNewPassword": "أدخل كلمة المرور الجديدة",
     "settings.update": "تحديث",
     "settings.deleteAccount": "حذف الحساب",
-    "settings.deleteConfirm": "هل أنت متأكد تماماً أنك تريد حذف حسابك؟ لا يمكن التراجع عن هذا الإجراء.",
+    "settings.deleteConfirm":
+      "هل أنت متأكد تماماً أنك تريد حذف حسابك؟ لا يمكن التراجع عن هذا الإجراء.",
     "settings.errorUpdatePass": "خطأ في تحديث كلمة المرور: ",
     "settings.passUpdated": "تم تحديث كلمة المرور بنجاح!",
     "settings.errorDelete": "خطأ في حذف الحساب: ",
@@ -172,7 +176,7 @@ const translations: Record<string, Record<string, string>> = {
     "history.clearConfirm": "هل أنت متأكد أنك تريد مسح سجل المشاهدة بالكامل؟",
     "history.empty": "سجل المشاهدة فارغ.",
     "history.discover": "اكتشف العناوين",
-    "history.remove": "إزالة من السجل"
+    "history.remove": "إزالة من السجل",
   },
   fr: {
     "nav.home": "Accueil",
@@ -222,7 +226,8 @@ const translations: Record<string, Record<string, string>> = {
     "profiles.signOut": "Se Déconnecter",
     "myList.title": "Ma Liste",
     "myList.empty": "Votre liste est vide.",
-    "myList.emptyDesc": "Sauvegardez les films et séries à regarder plus tard, ils apparaîtront ici.",
+    "myList.emptyDesc":
+      "Sauvegardez les films et séries à regarder plus tard, ils apparaîtront ici.",
     "myList.browse": "Parcourir les Films",
     "footer.tagline": "Une expérience cinématographique pour les patients et les obsédés.",
     "footer.privacy": "Confidentialité",
@@ -244,13 +249,15 @@ const translations: Record<string, Record<string, string>> = {
     "settings.switchProfile": "Changer de Profil",
     "settings.done": "Terminé",
     "settings.accountManagement": "Gestion du Compte",
-    "settings.accountManagementDesc": "Vous pouvez mettre à jour votre mot de passe ou supprimer définitivement votre compte ici. Ces actions sont irréversibles.",
+    "settings.accountManagementDesc":
+      "Vous pouvez mettre à jour votre mot de passe ou supprimer définitivement votre compte ici. Ces actions sont irréversibles.",
     "settings.newPassword": "Nouveau Mot de Passe",
     "settings.subdlApiKey": "Clé API SubDL (Optionnel)",
     "settings.enterNewPassword": "Entrez le nouveau mot de passe",
     "settings.update": "Mettre à jour",
     "settings.deleteAccount": "Supprimer le Compte",
-    "settings.deleteConfirm": "Êtes-vous absolument sûr de vouloir supprimer votre compte ? Cette action est irréversible.",
+    "settings.deleteConfirm":
+      "Êtes-vous absolument sûr de vouloir supprimer votre compte ? Cette action est irréversible.",
     "settings.errorUpdatePass": "Erreur lors de la mise à jour du mot de passe : ",
     "settings.passUpdated": "Mot de passe mis à jour avec succès !",
     "settings.errorDelete": "Erreur lors de la suppression du compte : ",
@@ -259,7 +266,7 @@ const translations: Record<string, Record<string, string>> = {
     "history.clearConfirm": "Êtes-vous sûr de vouloir effacer tout l'historique ?",
     "history.empty": "Votre historique est vide.",
     "history.discover": "Découvrir des titres",
-    "history.remove": "Retirer de l'historique"
+    "history.remove": "Retirer de l'historique",
   },
 };
 

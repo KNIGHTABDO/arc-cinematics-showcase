@@ -28,6 +28,6 @@ export const useSubtitlesStore = create<SubtitlesState>()(
     }),
     {
       name: "arc-subtitles-storage",
-    }
-  )
+    },
+  ),
 );

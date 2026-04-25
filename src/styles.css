@@ -94,7 +94,8 @@
     border-color: var(--color-border);
   }
 
-  html, body {
+  html,
+  body {
     background-color: var(--arc-void);
     color: var(--arc-text);
     font-family: var(--font-sans);
@@ -150,8 +151,13 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .no-scrollbar::-webkit-scrollbar { display: none; }
-  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 
   .text-stroke {
     -webkit-text-stroke: 1px oklch(1 0 0 / 0.18);
@@ -166,7 +172,10 @@
     background: var(--arc-surface);
     border: 1px solid var(--arc-border);
     border-radius: 12px;
-    transition: border-color 300ms ease, box-shadow 300ms ease, transform 300ms ease;
+    transition:
+      border-color 300ms ease,
+      box-shadow 300ms ease,
+      transform 300ms ease;
   }
   .arc-card:hover {
     border-color: oklch(0.76 0.15 305 / 0.35);
@@ -198,11 +207,9 @@
   pointer-events: none;
   z-index: 1;
   background:
-    radial-gradient(ellipse 70% 45% at 50% 0%, oklch(0.76 0.15 305 / 0.10), transparent 60%),
+    radial-gradient(ellipse 70% 45% at 50% 0%, oklch(0.76 0.15 305 / 0.1), transparent 60%),
     radial-gradient(ellipse 50% 30% at 80% 100%, oklch(0.74 0.18 0 / 0.05), transparent 60%);
 }
-
-
 
 /* Animated hue line */
 .arc-hue-line {
@@ -217,35 +224,53 @@
   animation: hue-shift 8s linear infinite;
 }
 @keyframes hue-shift {
-  0% { --hue: 280; }
-  50% { --hue: 360; }
-  100% { --hue: 280; }
+  0% {
+    --hue: 280;
+  }
+  50% {
+    --hue: 360;
+  }
+  100% {
+    --hue: 280;
+  }
 }
 
 /* Profile ring spin */
 @keyframes slow-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
-.spin-ring { animation: slow-spin 6s linear infinite; }
+.spin-ring {
+  animation: slow-spin 6s linear infinite;
+}
 
 /* View transitions */
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-old(root) {
-    animation: 400ms cubic-bezier(0.22,1,0.36,1) both vt-out;
+    animation: 400ms cubic-bezier(0.22, 1, 0.36, 1) both vt-out;
   }
   ::view-transition-new(root) {
-    animation: 400ms cubic-bezier(0.22,1,0.36,1) both vt-in;
+    animation: 400ms cubic-bezier(0.22, 1, 0.36, 1) both vt-in;
   }
 }
 @keyframes vt-out {
-  to { opacity: 0; transform: translateX(-30px); }
+  to {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
 }
 @keyframes vt-in {
-  from { opacity: 0; transform: translateX(30px); }
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 200ms !important;
   }

@@ -150,7 +150,9 @@ async function pollInfo(torrentId, tries = 6, delayMs = 1400) {
 }
 
 function pickFile(info, tc, preferredIdx) {
-  const files = (info?.files || []).filter((f) => /\.(mkv|mp4|m4v|avi|webm|ts)$/i.test(f.path || ""));
+  const files = (info?.files || []).filter((f) =>
+    /\.(mkv|mp4|m4v|avi|webm|ts)$/i.test(f.path || ""),
+  );
   if (!files.length) return null;
 
   if (Number.isInteger(preferredIdx)) {
@@ -187,7 +189,8 @@ async function waitDownloaded(torrentId, tries = 7, delayMs = 1500) {
     const res = await rdRequest(`/torrents/info/${torrentId}`, {}, 10000);
     last = await res.json().catch(() => ({}));
     if (["error", "dead", "magnet_error", "virus"].includes(last?.status)) return last;
-    if (last?.status === "downloaded" && Array.isArray(last?.links) && last.links.length) return last;
+    if (last?.status === "downloaded" && Array.isArray(last?.links) && last.links.length)
+      return last;
     await new Promise((r) => setTimeout(r, delayMs));
   }
   return last;
@@ -253,10 +256,7 @@ async function cleanup(torrentId) {
 async function runCase(tc) {
   const result = {
     label: tc.label,
-    watchId:
-      tc.kind === "tv"
-        ? `tv-${tc.tmdbId}-s${tc.season}e${tc.episode}`
-        : `${tc.tmdbId}`,
+    watchId: tc.kind === "tv" ? `tv-${tc.tmdbId}-s${tc.season}e${tc.episode}` : `${tc.tmdbId}`,
     imdbId: null,
     candidates: 0,
     best: null,
@@ -324,7 +324,11 @@ async function runCase(tc) {
       const downloaded = await waitDownloaded(torrentId);
       attempt.torrentStatus = downloaded?.status || attempt.torrentStatus;
 
-      if (downloaded?.status !== "downloaded" || !Array.isArray(downloaded?.links) || !downloaded.links.length) {
+      if (
+        downloaded?.status !== "downloaded" ||
+        !Array.isArray(downloaded?.links) ||
+        !downloaded.links.length
+      ) {
         if (["error", "dead", "magnet_error", "virus"].includes(downloaded?.status)) {
           metrics.rdStatusFailed += 1;
         }

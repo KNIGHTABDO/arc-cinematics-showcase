@@ -91,7 +91,12 @@ function SeriesPage() {
           </div>
         ) : (
           <div className="pb-20">
-            <ContentRow label={t("browse.trendingTV", lang)} items={trendingTV} variant="trending" linkPrefix="/tv" />
+            <ContentRow
+              label={t("browse.trendingTV", lang)}
+              items={trendingTV}
+              variant="trending"
+              linkPrefix="/tv"
+            />
             <ContentRow label="Airing Today" items={airingToday} linkPrefix="/tv" />
             <ContentRow label={t("browse.popularTV", lang)} items={popularTV} linkPrefix="/tv" />
             <ContentRow label={t("browse.acclaimed", lang)} items={topRatedTV} linkPrefix="/tv" />

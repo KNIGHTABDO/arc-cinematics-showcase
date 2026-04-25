@@ -32,19 +32,18 @@ export function MagneticButton({
   const onLeave = () => {
     cursor.onMouseLeave();
     if (prefersReducedMotion()) return;
-    if (ref.current) gsap.to(ref.current, { x: 0, y: 0, duration: 0.8, ease: "elastic.out(1, 0.3)" });
+    if (ref.current)
+      gsap.to(ref.current, { x: 0, y: 0, duration: 0.8, ease: "elastic.out(1, 0.3)" });
   };
 
   const base =
     "relative inline-flex items-center justify-center gap-2 font-medium tracking-tight transition-colors duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-arc-void focus-visible:ring-arc-accent rounded-full";
 
   const variants = {
-    primary:
-      "bg-arc-accent text-arc-void hover:bg-arc-accent/90 px-7 h-12 text-[15px] arc-glow",
+    primary: "bg-arc-accent text-arc-void hover:bg-arc-accent/90 px-7 h-12 text-[15px] arc-glow",
     ghost:
       "border border-white/15 bg-white/5 text-arc-text hover:bg-white/10 backdrop-blur-md px-7 h-12 text-[15px]",
-    icon:
-      "h-11 w-11 border border-white/15 bg-white/5 text-arc-text hover:bg-white/10 hover:border-arc-accent/40",
+    icon: "h-11 w-11 border border-white/15 bg-white/5 text-arc-text hover:bg-white/10 hover:border-arc-accent/40",
   };
 
   return (

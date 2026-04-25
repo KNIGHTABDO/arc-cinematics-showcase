@@ -114,7 +114,10 @@ function SearchPage() {
   }, [debounced, isKids]);
 
   const emptySuggestions = useMemo(
-    () => (isKids ? ["Minions", "Frozen", "Toy Story", "Moana", "Encanto"] : ["Inception", "Dune", "Interstellar", "Batman", "Romance"]),
+    () =>
+      isKids
+        ? ["Minions", "Frozen", "Toy Story", "Moana", "Encanto"]
+        : ["Inception", "Dune", "Interstellar", "Batman", "Romance"],
     [isKids],
   );
 

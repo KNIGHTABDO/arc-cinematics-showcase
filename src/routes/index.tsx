@@ -30,12 +30,13 @@ function LandingPage() {
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
-    
+
     const ctx = gsap.context(() => {
       if (containerRef.current) {
         const tl = gsap.timeline();
-        
-        tl.fromTo(containerRef.current.querySelector(".logo-mark"), 
+
+        tl.fromTo(
+          containerRef.current.querySelector(".logo-mark"),
           { y: -30, opacity: 0 },
           {
             y: 0,
@@ -43,9 +44,9 @@ function LandingPage() {
             duration: 1,
             ease: "power3.out",
             delay: 0.2,
-          }
-        )
-        .fromTo(containerRef.current.querySelectorAll("[data-stagger]"), 
+          },
+        ).fromTo(
+          containerRef.current.querySelectorAll("[data-stagger]"),
           { y: 40, opacity: 0 },
           {
             y: 0,
@@ -53,20 +54,22 @@ function LandingPage() {
             duration: 1,
             stagger: 0.1,
             ease: "expo.out",
-          }, 
-          "-=0.5"
+          },
+          "-=0.5",
         );
       }
     }, containerRef);
-    
+
     return () => ctx.revert();
   }, []);
 
   if (loading || session) return null; // Avoid flicker while checking auth state
 
   return (
-    <main ref={containerRef} className="relative flex min-h-screen flex-col items-center justify-center bg-arc-void px-6 overflow-hidden">
-      
+    <main
+      ref={containerRef}
+      className="relative flex min-h-screen flex-col items-center justify-center bg-arc-void px-6 overflow-hidden"
+    >
       {/* Dynamic Background */}
       <div className="absolute inset-0 z-0 opacity-40">
         <div className="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-arc-accent/20 blur-[120px]" />
@@ -77,12 +80,15 @@ function LandingPage() {
       </div>
 
       <div className="z-10 flex flex-col items-center text-center max-w-4xl">
-        <div className="mb-4 inline-flex items-center rounded-full border border-arc-accent/30 bg-arc-accent/10 px-4 py-1.5 backdrop-blur-md" data-stagger>
+        <div
+          className="mb-4 inline-flex items-center rounded-full border border-arc-accent/30 bg-arc-accent/10 px-4 py-1.5 backdrop-blur-md"
+          data-stagger
+        >
           <span className="text-xs font-semibold uppercase tracking-widest text-arc-accent">
             Next-Gen Streaming
           </span>
         </div>
-        
+
         <SplitTextReveal
           text="Cinema without limits."
           as="h1"
@@ -90,10 +96,10 @@ function LandingPage() {
           stagger={0.03}
           delay={0.4}
         />
-        
+
         <p data-stagger className="mt-8 max-w-2xl text-lg md:text-xl text-arc-text/70">
-          Experience buffer-free 4K streaming powered by decentralized edge networks. 
-          No storage required. Pure cinematic excellence.
+          Experience buffer-free 4K streaming powered by decentralized edge networks. No storage
+          required. Pure cinematic excellence.
         </p>
 
         <div data-stagger className="mt-12 flex flex-col sm:flex-row items-center gap-6">
@@ -105,7 +111,7 @@ function LandingPage() {
             <span className="relative z-10">Start Watching Free</span>
             <div className="absolute inset-0 z-0 bg-white/20 opacity-0 transition-opacity group-hover:opacity-100" />
           </Link>
-          
+
           <Link
             to="/login"
             {...linkCursor}

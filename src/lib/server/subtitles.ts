@@ -15,7 +15,10 @@ const subtitlesSearchInput = z.object({
   originalLanguage: z.string().optional(),
 });
 
-const SUBDL_API_KEY = typeof process !== "undefined" ? process.env.VITE_SUBDL_API_KEY || import.meta.env.VITE_SUBDL_API_KEY : import.meta.env.VITE_SUBDL_API_KEY;
+const SUBDL_API_KEY =
+  typeof process !== "undefined"
+    ? process.env.VITE_SUBDL_API_KEY || import.meta.env.VITE_SUBDL_API_KEY
+    : import.meta.env.VITE_SUBDL_API_KEY;
 
 const subtitleVttInput = z.object({
   url: z.string().url(),
@@ -105,9 +108,9 @@ function parseTimeStampToMs(stamp: string): number {
   return hours * 3600000 + minutes * 60000 + seconds * 1000 + millis;
 }
 
-function extractSubtitleTimingStats(text: string):
-  | { cueCount: number; firstCueMs: number; lastCueMs: number }
-  | null {
+function extractSubtitleTimingStats(
+  text: string,
+): { cueCount: number; firstCueMs: number; lastCueMs: number } | null {
   const lines = text.replace(/\r\n|\r/g, "\n").split("\n");
   const timeRx = /(\d{2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{1,3})/;
 
@@ -195,13 +198,19 @@ function srtToVtt(text: string, shiftMs = 0): string {
       parseInt(parts[1]) * 60000 +
       parseInt(parts[2]) * 1000 +
       parseInt(parts[3]);
-    
+
     ms += shiftMs;
     if (ms < 0) ms = 0;
 
-    const h = Math.floor(ms / 3600000).toString().padStart(2, "0");
-    const m = Math.floor((ms % 3600000) / 60000).toString().padStart(2, "0");
-    const s = Math.floor((ms % 60000) / 1000).toString().padStart(2, "0");
+    const h = Math.floor(ms / 3600000)
+      .toString()
+      .padStart(2, "0");
+    const m = Math.floor((ms % 3600000) / 60000)
+      .toString()
+      .padStart(2, "0");
+    const s = Math.floor((ms % 60000) / 1000)
+      .toString()
+      .padStart(2, "0");
     const msStr = (ms % 1000).toString().padStart(3, "0");
     return `${h}:${m}:${s}.${msStr}`;
   };
@@ -243,8 +252,12 @@ async function extractFromZip(buffer: Buffer): Promise<Buffer | null> {
   // ZIP local file header signature: PK\x03\x04
   let offset = 0;
   while (offset < buffer.length - 30) {
-    if (buffer[offset] !== 0x50 || buffer[offset + 1] !== 0x4B ||
-        buffer[offset + 2] !== 0x03 || buffer[offset + 3] !== 0x04) {
+    if (
+      buffer[offset] !== 0x50 ||
+      buffer[offset + 1] !== 0x4b ||
+      buffer[offset + 2] !== 0x03 ||
+      buffer[offset + 3] !== 0x04
+    ) {
       offset++;
       continue;
     }
@@ -293,8 +306,13 @@ async function fetchSubtitleAsVtt(url: string, offsetMs = 0): Promise<string> {
 
   // Check if this is a ZIP file (PK\x03\x04 magic bytes)
   let textBuffer = buffer;
-  if (buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4B &&
-      buffer[2] === 0x03 && buffer[3] === 0x04) {
+  if (
+    buffer.length > 4 &&
+    buffer[0] === 0x50 &&
+    buffer[1] === 0x4b &&
+    buffer[2] === 0x03 &&
+    buffer[3] === 0x04
+  ) {
     const extracted = await extractFromZip(buffer);
     if (extracted) {
       textBuffer = Buffer.from(extracted);
@@ -319,7 +337,8 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
       if (!langPrefix) return true;
       const s = l.toLowerCase();
       if (langPrefix === "ar" && (s === "ara" || s === "ar" || s === "arabic")) return true;
-      if (langPrefix === "fr" && (s === "fre" || s === "fra" || s === "fr" || s === "french")) return true;
+      if (langPrefix === "fr" && (s === "fre" || s === "fra" || s === "fr" || s === "french"))
+        return true;
       if (langPrefix === "es" && (s === "spa" || s === "es" || s === "spanish")) return true;
       if (langPrefix === "en" && (s === "eng" || s === "en" || s === "english")) return true;
       return s.startsWith(langPrefix);
@@ -348,15 +367,25 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
       // Release name similarity
       if (relName && name) {
         // Extract release group (e.g., TEPES, YTS, RARBG)
-        const relGroup = relName.replace(/\.[^.]+$/, "").split(/[.\-_]/).pop() || "";
+        const relGroup =
+          relName
+            .replace(/\.[^.]+$/, "")
+            .split(/[.\-_]/)
+            .pop() || "";
         if (relGroup && name.includes(relGroup.toLowerCase())) score += 200;
         // Resolution match
         for (const res of ["2160p", "1080p", "720p", "480p"]) {
-          if (relName.includes(res) && name.includes(res)) { score += 100; break; }
+          if (relName.includes(res) && name.includes(res)) {
+            score += 100;
+            break;
+          }
         }
         // Source match (web-dl, bluray, etc)
         for (const src of ["web-dl", "webrip", "bluray", "brrip", "hdtv", "amzn", "nf"]) {
-          if (relName.includes(src) && name.includes(src)) { score += 50; break; }
+          if (relName.includes(src) && name.includes(src)) {
+            score += 50;
+            break;
+          }
         }
       }
 
@@ -396,8 +425,8 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
       if (s?.g) {
         const pop = parseInt(s.g, 10);
         if (!isNaN(pop)) {
-           score += pop * 500;
-           if (pop > 0) score += 1000; // Flat bonus for having any positive community rating
+          score += pop * 500;
+          if (pop > 0) score += 1000; // Flat bonus for having any positive community rating
         }
       }
 
@@ -429,7 +458,9 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
           const res = await fetch(`https://api.subdl.com/api/v1/subtitles?${params.toString()}`);
           if (res.ok) {
             const payload = await res.json().catch(() => ({}));
-            const subtitles = Array.isArray((payload as any)?.subtitles) ? (payload as any).subtitles : [];
+            const subtitles = Array.isArray((payload as any)?.subtitles)
+              ? (payload as any).subtitles
+              : [];
             subdlTracks = subtitles
               .map((s: any) => ({
                 label: s?.release_name || s?.language || "Synced",
@@ -457,7 +488,9 @@ export const getSubtitlesForMedia = createServerFn({ method: "GET" })
         const res = await fetch(stremioUrl);
         if (res.ok) {
           const payload = await res.json().catch(() => ({}));
-          const subtitles = Array.isArray((payload as any)?.subtitles) ? (payload as any).subtitles : [];
+          const subtitles = Array.isArray((payload as any)?.subtitles)
+            ? (payload as any).subtitles
+            : [];
           stremioTracks = subtitles
             .filter((s: any) => isTargetLang(s?.lang || ""))
             .map((s: any) => {
@@ -523,8 +556,13 @@ async function fetchRawSubtitleText(url: string): Promise<string> {
   let buffer = Buffer.from(arrayBuffer);
 
   // Handle ZIP
-  if (buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4B &&
-      buffer[2] === 0x03 && buffer[3] === 0x04) {
+  if (
+    buffer.length > 4 &&
+    buffer[0] === 0x50 &&
+    buffer[1] === 0x4b &&
+    buffer[2] === 0x03 &&
+    buffer[3] === 0x04
+  ) {
     const extracted = await extractFromZip(buffer);
     if (extracted) buffer = Buffer.from(extracted);
   }
@@ -570,4 +608,3 @@ export const getArabicSubtitles = createServerFn({ method: "GET" })
       return { error: e?.message || "Subtitle conversion failed" };
     }
   });
-

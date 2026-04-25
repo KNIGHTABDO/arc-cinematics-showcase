@@ -84,10 +84,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     applyProfile(newProfile);
 
     // Persist to Supabase
-    const { error } = await supabase
-      .from("profiles")
-      .update(updates)
-      .eq("id", profile.id);
+    const { error } = await supabase.from("profiles").update(updates).eq("id", profile.id);
     if (error) console.error("[ARC] settings update error:", error.message);
   };
 
@@ -97,7 +94,15 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <SettingsContext.Provider value={{ profile, lang: profile?.ui_language || "en", loading, updateSettings, reloadProfile }}>
+    <SettingsContext.Provider
+      value={{
+        profile,
+        lang: profile?.ui_language || "en",
+        loading,
+        updateSettings,
+        reloadProfile,
+      }}
+    >
       {children}
     </SettingsContext.Provider>
   );

@@ -14,9 +14,7 @@ const CursorContext = createContext<CursorContextValue>({
 
 export function CursorProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CursorState>("default");
-  return (
-    <CursorContext.Provider value={{ state, setState }}>{children}</CursorContext.Provider>
-  );
+  return <CursorContext.Provider value={{ state, setState }}>{children}</CursorContext.Provider>;
 }
 
 export function useCursor() {

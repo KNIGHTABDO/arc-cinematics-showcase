@@ -80,7 +80,7 @@ function HistoryPage() {
           } catch {
             return null;
           }
-        })
+        }),
       );
       setItems(results.filter(Boolean));
       setLoading(false);
@@ -104,10 +104,7 @@ function HistoryPage() {
         .eq("imdb_id", item.imdb_id)
         .eq("media_type", "tv");
     } else {
-      await supabase
-        .from("watch_history")
-        .delete()
-        .eq("id", item.id);
+      await supabase.from("watch_history").delete().eq("id", item.id);
     }
   };
 
@@ -125,7 +122,9 @@ function HistoryPage() {
       <main className="min-h-screen bg-arc-void pt-24 pb-12 px-[5vw]">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center justify-between mb-8">
-            <h1 className="font-display text-3xl font-extrabold text-arc-text">{t("history.title", lang)}</h1>
+            <h1 className="font-display text-3xl font-extrabold text-arc-text">
+              {t("history.title", lang)}
+            </h1>
             {items.length > 0 && (
               <button
                 onClick={clearAll}
@@ -150,11 +149,15 @@ function HistoryPage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
               {items.map((item) => {
-                const pct = item.duration > 0 ? Math.min((item.progress / item.duration) * 100, 100) : 0;
+                const pct =
+                  item.duration > 0 ? Math.min((item.progress / item.duration) * 100, 100) : 0;
                 const d = new Date(item.updated_at);
 
                 return (
-                  <div key={item.id} className="group relative rounded-xl overflow-hidden border border-white/10 bg-arc-surface-2 flex flex-col">
+                  <div
+                    key={item.id}
+                    className="group relative rounded-xl overflow-hidden border border-white/10 bg-arc-surface-2 flex flex-col"
+                  >
                     <Link to="/watch/$id" params={{ id: item.watchId }} className="block flex-1">
                       <div
                         className="aspect-video bg-cover bg-center relative"
@@ -172,7 +175,10 @@ function HistoryPage() {
                         </div>
                       </div>
                       <div className="h-1 bg-white/10 w-full relative">
-                        <div className="absolute top-0 left-0 h-full bg-arc-accent transition-all" style={{ width: `${pct}%` }} />
+                        <div
+                          className="absolute top-0 left-0 h-full bg-arc-accent transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                       <div className="p-3">
                         <p className="text-sm font-semibold text-arc-text truncate">{item.title}</p>
@@ -181,14 +187,24 @@ function HistoryPage() {
                         </p>
                       </div>
                     </Link>
-                    
+
                     <button
                       onClick={() => removeItem(item)}
                       className="absolute top-2 right-2 h-7 w-7 rounded-full bg-black/60 backdrop-blur border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:bg-red-500/80 hover:border-red-500"
                       title={t("history.remove", lang)}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M18 6 6 18" />
+                        <path d="m6 6 12 12" />
                       </svg>
                     </button>
                   </div>

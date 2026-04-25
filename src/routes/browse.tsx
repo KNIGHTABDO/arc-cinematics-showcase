@@ -53,18 +53,17 @@ function BrowsePage() {
 
     if (isKids) {
       // Kids profile — only show safe content
-      Promise.all([
-        getKidsMovies({ data: langParam }),
-        getKidsTV({ data: langParam }),
-      ]).then(([kidsMovies, kidsShows]) => {
-        setTrending(kidsMovies?.slice(0, 6) || []);
-        setPopular(kidsMovies?.slice(6, 12) || []);
-        setTopRated(kidsMovies?.slice(12, 18) || []);
-        setNowPlaying(kidsShows?.slice(0, 6) || []);
-        setTrendingTV(kidsShows?.slice(6, 12) || []);
-        setPopularTV(kidsShows?.slice(12, 18) || []);
-        setLoaded(true);
-      });
+      Promise.all([getKidsMovies({ data: langParam }), getKidsTV({ data: langParam })]).then(
+        ([kidsMovies, kidsShows]) => {
+          setTrending(kidsMovies?.slice(0, 6) || []);
+          setPopular(kidsMovies?.slice(6, 12) || []);
+          setTopRated(kidsMovies?.slice(12, 18) || []);
+          setNowPlaying(kidsShows?.slice(0, 6) || []);
+          setTrendingTV(kidsShows?.slice(6, 12) || []);
+          setPopularTV(kidsShows?.slice(12, 18) || []);
+          setLoaded(true);
+        },
+      );
     } else {
       // Normal profile — full catalog
       Promise.all([
@@ -93,12 +92,20 @@ function BrowsePage() {
 
     const ctx = gsap.context(() => {
       if (heroBgRef.current) {
-        gsap.fromTo(heroBgRef.current, { scale: 1.12 }, { scale: 1.0, duration: 6, ease: "power2.out" });
+        gsap.fromTo(
+          heroBgRef.current,
+          { scale: 1.12 },
+          { scale: 1.0, duration: 6, ease: "power2.out" },
+        );
       }
       if (scrollIndicator.current) {
         gsap.to(scrollIndicator.current.querySelector("[data-bar]"), {
-          scaleY: 0.2, transformOrigin: "top center",
-          repeat: -1, yoyo: true, duration: 1.4, ease: "power1.inOut",
+          scaleY: 0.2,
+          transformOrigin: "top center",
+          repeat: -1,
+          yoyo: true,
+          duration: 1.4,
+          ease: "power1.inOut",
         });
       }
     });
@@ -128,14 +135,31 @@ function BrowsePage() {
               ref={heroBgRef}
               className="absolute inset-0 bg-cover bg-center"
               style={{
-                backgroundImage: heroMovie.backdrop_path ? `url(https://image.tmdb.org/t/p/original${heroMovie.backdrop_path})` : "none"
+                backgroundImage: heroMovie.backdrop_path
+                  ? `url(https://image.tmdb.org/t/p/original${heroMovie.backdrop_path})`
+                  : "none",
               }}
             />
-            <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, rgba(8,8,8,0.96) 20%, rgba(8,8,8,0.55) 50%, rgba(8,8,8,0.15) 100%)" }} />
-            <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(8,8,8,0.6) 0%, transparent 35%, transparent 60%, rgba(8,8,8,1) 100%)" }} />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(90deg, rgba(8,8,8,0.96) 20%, rgba(8,8,8,0.55) 50%, rgba(8,8,8,0.15) 100%)",
+              }}
+            />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(8,8,8,0.6) 0%, transparent 35%, transparent 60%, rgba(8,8,8,1) 100%)",
+              }}
+            />
 
             <div className="relative z-10 flex h-full max-w-[640px] flex-col justify-center pl-[7vw] pr-6 pt-16">
-              <div className="mb-5 inline-flex items-center gap-3" style={{ animation: "fade-in 800ms ease-out 200ms both" }}>
+              <div
+                className="mb-5 inline-flex items-center gap-3"
+                style={{ animation: "fade-in 800ms ease-out 200ms both" }}
+              >
                 <span className="h-px w-8 bg-arc-accent" />
                 <span className="label-caps text-arc-accent">{t("hero.badge", lang)}</span>
               </div>
@@ -149,22 +173,38 @@ function BrowsePage() {
                 delay={0.35}
               />
 
-              <p className="mt-5 max-w-md text-sm leading-relaxed text-arc-text/70 line-clamp-3"
-                style={{ animation: "fade-in 800ms ease-out 700ms both" }}>
+              <p
+                className="mt-5 max-w-md text-sm leading-relaxed text-arc-text/70 line-clamp-3"
+                style={{ animation: "fade-in 800ms ease-out 700ms both" }}
+              >
                 {heroMovie.overview}
               </p>
 
-              <div className="mt-4 flex flex-wrap items-center gap-2" style={{ animation: "fade-in 800ms ease-out 850ms both" }}>
-                <ArcBadge>★ {heroMovie.vote_average ? heroMovie.vote_average.toFixed(1) : "N/A"} IMDb</ArcBadge>
+              <div
+                className="mt-4 flex flex-wrap items-center gap-2"
+                style={{ animation: "fade-in 800ms ease-out 850ms both" }}
+              >
+                <ArcBadge>
+                  ★ {heroMovie.vote_average ? heroMovie.vote_average.toFixed(1) : "N/A"} IMDb
+                </ArcBadge>
                 <ArcBadge>4K HDR</ArcBadge>
-                {heroMovie.release_date && <ArcBadge>{heroMovie.release_date.substring(0, 4)}</ArcBadge>}
-                {heroMovie.first_air_date && <ArcBadge>{heroMovie.first_air_date.substring(0, 4)}</ArcBadge>}
+                {heroMovie.release_date && (
+                  <ArcBadge>{heroMovie.release_date.substring(0, 4)}</ArcBadge>
+                )}
+                {heroMovie.first_air_date && (
+                  <ArcBadge>{heroMovie.first_air_date.substring(0, 4)}</ArcBadge>
+                )}
               </div>
 
-              <div className="mt-8 flex items-center gap-3" style={{ animation: "fade-in 800ms ease-out 1000ms both" }}>
+              <div
+                className="mt-8 flex items-center gap-3"
+                style={{ animation: "fade-in 800ms ease-out 1000ms both" }}
+              >
                 <Link to="/title/$id" params={{ id: heroMovie.id.toString() }}>
                   <MagneticButton variant="primary">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
                     {t("hero.playNow", lang)}
                   </MagneticButton>
                 </Link>
@@ -174,8 +214,16 @@ function BrowsePage() {
               </div>
             </div>
 
-            <div ref={scrollIndicator} className="absolute bottom-10 right-[5vw] z-10 hidden flex-col items-center gap-3 md:flex">
-              <span className="label-caps text-arc-text/50" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Scroll</span>
+            <div
+              ref={scrollIndicator}
+              className="absolute bottom-10 right-[5vw] z-10 hidden flex-col items-center gap-3 md:flex"
+            >
+              <span
+                className="label-caps text-arc-text/50"
+                style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+              >
+                Scroll
+              </span>
               <span data-bar className="block h-12 w-px bg-arc-text/40" />
             </div>
           </section>
@@ -187,8 +235,12 @@ function BrowsePage() {
           <ContentRow label={t("browse.trending", lang)} items={trending} variant="trending" />
           <ContentRow label={t("browse.acclaimed", lang)} items={topRated} />
           <ContentRow label={t("browse.nowPlaying", lang)} items={nowPlaying} />
-          {trendingTV.length > 0 && <ContentRow label={t("browse.trendingTV", lang)} items={trendingTV} linkPrefix="/tv" />}
-          {popularTV.length > 0 && <ContentRow label={t("browse.popularTV", lang)} items={popularTV} linkPrefix="/tv" />}
+          {trendingTV.length > 0 && (
+            <ContentRow label={t("browse.trendingTV", lang)} items={trendingTV} linkPrefix="/tv" />
+          )}
+          {popularTV.length > 0 && (
+            <ContentRow label={t("browse.popularTV", lang)} items={popularTV} linkPrefix="/tv" />
+          )}
           <ContentRow label={t("browse.topPicks", lang)} items={popular?.slice(1)} />
         </div>
 
@@ -205,17 +257,26 @@ function Footer() {
       <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
         <div>
           <div className="font-display text-2xl font-extrabold">
-            A<span className="relative">R<span className="absolute -bottom-0 -right-1 h-1.5 w-1.5" style={{ background: "var(--arc-accent)", transform: "rotate(45deg)" }} /></span>
+            A
+            <span className="relative">
+              R
+              <span
+                className="absolute -bottom-0 -right-1 h-1.5 w-1.5"
+                style={{ background: "var(--arc-accent)", transform: "rotate(45deg)" }}
+              />
+            </span>
             <span className="text-arc-accent">C</span>
           </div>
-          <p className="mt-2 max-w-sm text-xs text-arc-muted">
-            {t("footer.tagline", lang)}
-          </p>
+          <p className="mt-2 max-w-sm text-xs text-arc-muted">{t("footer.tagline", lang)}</p>
         </div>
         <div className="flex gap-8 text-[11px] tracking-wider uppercase text-arc-muted">
           <span>© 2026 ARC</span>
-          <Link to="/privacy" className="hover:text-arc-text transition">{t("footer.privacy", lang)}</Link>
-          <Link to="/terms" className="hover:text-arc-text transition">{t("footer.terms", lang)}</Link>
+          <Link to="/privacy" className="hover:text-arc-text transition">
+            {t("footer.privacy", lang)}
+          </Link>
+          <Link to="/terms" className="hover:text-arc-text transition">
+            {t("footer.terms", lang)}
+          </Link>
           <span>{t("footer.tmdb", lang)}</span>
         </div>
       </div>
@@ -244,7 +305,7 @@ function ContinueWatchingRow() {
 
       const grouped: typeof data = [];
       const seenIds = new Set<string>();
-      
+
       for (const row of data) {
         if (row.media_type === "tv") {
           if (seenIds.has(row.imdb_id)) continue;
@@ -280,8 +341,10 @@ function ContinueWatchingRow() {
                 duration: entry.duration,
               };
             }
-          } catch { return null; }
-        })
+          } catch {
+            return null;
+          }
+        }),
       );
       setItems(results.filter(Boolean));
     };
@@ -298,21 +361,35 @@ function ContinueWatchingRow() {
         {items.map((item) => {
           const pct = item.duration > 0 ? Math.min((item.progress / item.duration) * 100, 100) : 0;
           return (
-            <Link key={item.id} to="/watch/$id" params={{ id: item.watchId }} className="shrink-0 w-[260px] group">
+            <Link
+              key={item.id}
+              to="/watch/$id"
+              params={{ id: item.watchId }}
+              className="shrink-0 w-[260px] group"
+            >
               <div className="relative rounded-xl overflow-hidden border border-white/10 bg-arc-surface-2">
                 <div
                   className="aspect-video bg-cover bg-center"
-                  style={{ backgroundImage: item.backdrop_path ? `url(https://image.tmdb.org/t/p/w500${item.backdrop_path})` : "none" }}
+                  style={{
+                    backgroundImage: item.backdrop_path
+                      ? `url(https://image.tmdb.org/t/p/w500${item.backdrop_path})`
+                      : "none",
+                  }}
                 >
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
                   <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
                     <div className="h-12 w-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
                     </div>
                   </div>
                 </div>
                 <div className="h-1 bg-white/10">
-                  <div className="h-full bg-arc-accent transition-all" style={{ width: `${pct}%` }} />
+                  <div
+                    className="h-full bg-arc-accent transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
                 </div>
               </div>
               <p className="mt-2 text-sm font-medium text-arc-text/80 truncate">{item.title}</p>

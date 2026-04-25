@@ -27,7 +27,7 @@ export function SplitTextReveal({
   const ref = useRef<HTMLElement>(null);
   const rtl = isRTL(text);
   // Force word-level splitting for RTL text to prevent character reversal
-  const by = rtl ? "word" : (byProp || "char");
+  const by = rtl ? "word" : byProp || "char";
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
@@ -46,7 +46,10 @@ export function SplitTextReveal({
     return () => {
       tween.kill();
       // Clean up inline styles to prevent GSAP visibility bugs
-      items.forEach(item => { item.style.removeProperty("transform"); item.style.removeProperty("opacity"); });
+      items.forEach((item) => {
+        item.style.removeProperty("transform");
+        item.style.removeProperty("opacity");
+      });
     };
   }, [text, by, stagger, delay]);
 
@@ -64,7 +67,9 @@ export function SplitTextReveal({
         ))
       : text.split(" ").map((w, i) => (
           <span key={i} className="inline-block overflow-hidden">
-            <span data-split className="inline-block">{w}</span>
+            <span data-split className="inline-block">
+              {w}
+            </span>
             {i < text.split(" ").length - 1 ? <span>&nbsp;</span> : null}
           </span>
         ));

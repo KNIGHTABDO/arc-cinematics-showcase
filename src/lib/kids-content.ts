@@ -12,7 +12,9 @@ export function isMovieAllowedForKids(movie: any): boolean {
   if (movie.adult === true) return false;
 
   const genreIds: number[] = Array.isArray(movie.genres)
-    ? movie.genres.map((genre: any) => Number(genre?.id)).filter((id: number) => Number.isFinite(id))
+    ? movie.genres
+        .map((genre: any) => Number(genre?.id))
+        .filter((id: number) => Number.isFinite(id))
     : [];
 
   const genreAllowed = genreIds.some((id) => KIDS_MOVIE_GENRES.has(id));
@@ -24,7 +26,8 @@ export function isMovieAllowedForKids(movie: any): boolean {
       ?.filter((entry: string) => entry.length > 0) || [];
 
   const certAllowed =
-    usCertifications.length === 0 || usCertifications.every((cert) => MOVIE_ALLOWED_CERTS.has(cert));
+    usCertifications.length === 0 ||
+    usCertifications.every((cert) => MOVIE_ALLOWED_CERTS.has(cert));
 
   return genreAllowed && certAllowed;
 }
@@ -38,12 +41,15 @@ export function isTVAllowedForKids(show: any): boolean {
 
   const genreAllowed = genreIds.some((id) => KIDS_TV_GENRES.has(id));
 
-  const usCertifications: string[] =
-    show.content_ratings?.results
-      ?.find((entry: any) => entry?.iso_3166_1 === "US")
-      ?.rating
-      ? [normalizeCertification(show.content_ratings.results.find((entry: any) => entry?.iso_3166_1 === "US")?.rating)]
-      : [];
+  const usCertifications: string[] = show.content_ratings?.results?.find(
+    (entry: any) => entry?.iso_3166_1 === "US",
+  )?.rating
+    ? [
+        normalizeCertification(
+          show.content_ratings.results.find((entry: any) => entry?.iso_3166_1 === "US")?.rating,
+        ),
+      ]
+    : [];
 
   const certAllowed =
     usCertifications.length === 0 || usCertifications.every((cert) => TV_ALLOWED_CERTS.has(cert));

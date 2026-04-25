@@ -44,7 +44,12 @@ function TVDetailPage() {
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [loadingEps, setLoadingEps] = useState(false);
   const [inList, setInList] = useState(false);
-  const [lastWatched, setLastWatched] = useState<{ season: number; episode: number; progress: number; duration: number } | null>(null);
+  const [lastWatched, setLastWatched] = useState<{
+    season: number;
+    episode: number;
+    progress: number;
+    duration: number;
+  } | null>(null);
   const isKids = profile?.is_kids === true;
   const blockedForKids = isKids && show && !isTVAllowedForKids(show);
 
@@ -96,7 +101,12 @@ function TVDetailPage() {
       .maybeSingle()
       .then(({ data }) => {
         if (data && data.season && data.episode && data.progress > 10) {
-          setLastWatched({ season: data.season, episode: data.episode, progress: data.progress, duration: data.duration });
+          setLastWatched({
+            season: data.season,
+            episode: data.episode,
+            progress: data.progress,
+            duration: data.duration,
+          });
         }
       });
   }, [id]);
@@ -105,7 +115,11 @@ function TVDetailPage() {
     const profileId = localStorage.getItem("arc_active_profile");
     if (!profileId) return;
     if (inList) {
-      await supabase.from("favorites").delete().eq("profile_id", profileId).eq("imdb_id", `tv-${id}`);
+      await supabase
+        .from("favorites")
+        .delete()
+        .eq("profile_id", profileId)
+        .eq("imdb_id", `tv-${id}`);
       setInList(false);
     } else {
       await supabase.from("favorites").insert({ profile_id: profileId, imdb_id: `tv-${id}` });
@@ -113,7 +127,9 @@ function TVDetailPage() {
     }
   };
 
-  const lastWatchedPct = lastWatched ? Math.min((lastWatched.progress / lastWatched.duration) * 100, 100) : 0;
+  const lastWatchedPct = lastWatched
+    ? Math.min((lastWatched.progress / lastWatched.duration) * 100, 100)
+    : 0;
   const heroWatchId = lastWatched
     ? `tv-${id}-s${lastWatched.season}e${lastWatched.episode}`
     : `tv-${id}-s${selectedSeason}e1`;
@@ -141,7 +157,9 @@ function TVDetailPage() {
         <Navbar />
         <main className="flex min-h-screen items-center justify-center bg-arc-void px-6 text-center">
           <div className="max-w-md">
-            <h1 className="font-display text-3xl font-extrabold text-arc-text">Content restricted</h1>
+            <h1 className="font-display text-3xl font-extrabold text-arc-text">
+              Content restricted
+            </h1>
             <p className="mt-4 text-sm text-arc-muted">
               This title is not available on kids profiles.
             </p>
@@ -165,33 +183,62 @@ function TVDetailPage() {
         <div className="relative h-[60vh] w-full overflow-hidden">
           <div
             className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: show.backdrop_path ? `url(https://image.tmdb.org/t/p/original${show.backdrop_path})` : "none" }}
+            style={{
+              backgroundImage: show.backdrop_path
+                ? `url(https://image.tmdb.org/t/p/original${show.backdrop_path})`
+                : "none",
+            }}
           />
-          <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, rgba(8,8,8,0.96) 20%, rgba(8,8,8,0.5) 60%, rgba(8,8,8,0.2) 100%)" }} />
-          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(8,8,8,0.3) 0%, transparent 30%, transparent 60%, rgba(8,8,8,1) 100%)" }} />
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(90deg, rgba(8,8,8,0.96) 20%, rgba(8,8,8,0.5) 60%, rgba(8,8,8,0.2) 100%)",
+            }}
+          />
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(8,8,8,0.3) 0%, transparent 30%, transparent 60%, rgba(8,8,8,1) 100%)",
+            }}
+          />
 
           <div className="relative z-10 flex h-full max-w-[600px] flex-col justify-end pl-[7vw] pb-10">
-            <h1 className="font-display text-[clamp(32px,5vw,64px)] font-extrabold leading-tight">{show.name}</h1>
+            <h1 className="font-display text-[clamp(32px,5vw,64px)] font-extrabold leading-tight">
+              {show.name}
+            </h1>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <ArcBadge>★ {show.vote_average?.toFixed(1)} IMDb</ArcBadge>
               {show.first_air_date && <ArcBadge>{show.first_air_date.substring(0, 4)}</ArcBadge>}
-              <ArcBadge>{seasons.length} Season{seasons.length > 1 ? "s" : ""}</ArcBadge>
+              <ArcBadge>
+                {seasons.length} Season{seasons.length > 1 ? "s" : ""}
+              </ArcBadge>
               {show.status && <ArcBadge>{show.status}</ArcBadge>}
-              {show.genres?.map((g: any) => <ArcBadge key={g.id}>{g.name}</ArcBadge>)}
+              {show.genres?.map((g: any) => (
+                <ArcBadge key={g.id}>{g.name}</ArcBadge>
+              ))}
             </div>
 
-            <p className="mt-4 max-w-lg text-sm leading-relaxed text-arc-text/70 line-clamp-3">{show.overview}</p>
+            <p className="mt-4 max-w-lg text-sm leading-relaxed text-arc-text/70 line-clamp-3">
+              {show.overview}
+            </p>
 
             <div className="mt-6 flex items-center gap-3">
               {episodes.length > 0 && (
                 <Link to="/watch/$id" params={{ id: heroWatchId }}>
                   <MagneticButton variant="primary" className="relative overflow-hidden">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
                     {heroButtonText}
                     {lastWatched && (
                       <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/20">
-                        <span className="absolute left-0 top-0 h-full bg-arc-accent transition-all" style={{ width: `${lastWatchedPct}%` }} />
+                        <span
+                          className="absolute left-0 top-0 h-full bg-arc-accent transition-all"
+                          style={{ width: `${lastWatchedPct}%` }}
+                        />
                       </span>
                     )}
                   </MagneticButton>
@@ -240,12 +287,19 @@ function TVDetailPage() {
                   {/* Episode Still */}
                   <div
                     className="aspect-video bg-cover bg-center"
-                    style={{ backgroundImage: ep.still_path ? `url(https://image.tmdb.org/t/p/w500${ep.still_path})` : "none", backgroundColor: "var(--arc-surface)" }}
+                    style={{
+                      backgroundImage: ep.still_path
+                        ? `url(https://image.tmdb.org/t/p/w500${ep.still_path})`
+                        : "none",
+                      backgroundColor: "var(--arc-surface)",
+                    }}
                   >
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition" />
                     <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
                       <div className="h-12 w-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
                       </div>
                     </div>
                   </div>
@@ -263,7 +317,9 @@ function TVDetailPage() {
                         {ep.runtime && (
                           <span className="text-xs text-arc-muted">{ep.runtime}m</span>
                         )}
-                        <span className="text-xs text-arc-muted">★ {ep.vote_average?.toFixed(1)}</span>
+                        <span className="text-xs text-arc-muted">
+                          ★ {ep.vote_average?.toFixed(1)}
+                        </span>
                       </div>
                     </div>
                     {ep.overview && (
@@ -284,9 +340,15 @@ function TVDetailPage() {
                   <div key={actor.id} className="shrink-0 text-center w-[100px]">
                     <div
                       className="w-[80px] h-[80px] rounded-full mx-auto bg-arc-surface-2 bg-cover bg-center border border-white/5"
-                      style={{ backgroundImage: actor.profile_path ? `url(https://image.tmdb.org/t/p/w185${actor.profile_path})` : "none" }}
+                      style={{
+                        backgroundImage: actor.profile_path
+                          ? `url(https://image.tmdb.org/t/p/w185${actor.profile_path})`
+                          : "none",
+                      }}
                     />
-                    <p className="mt-2 text-xs font-medium text-arc-text/80 truncate">{actor.name}</p>
+                    <p className="mt-2 text-xs font-medium text-arc-text/80 truncate">
+                      {actor.name}
+                    </p>
                     <p className="text-[10px] text-arc-muted truncate">{actor.character}</p>
                   </div>
                 ))}

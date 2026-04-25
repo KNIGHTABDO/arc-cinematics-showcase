@@ -327,6 +327,7 @@ const resolveTorrentSchema = z.object({
   watchId: z.string().min(1),
   clientProfile: z.enum(["default", "ios_safari"]).optional(),
   preferredQuality: z.enum(["auto", "2160", "1080", "720", "480"]).optional(),
+  preferredAudioLanguage: z.string().optional(),
 });
 
 const pollStatusSchema = z.object({
@@ -357,7 +358,7 @@ const playbackSchema = z.object({
 export const getStreamForMovie = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => resolveTorrentSchema.parse(d))
   .handler(async ({ data }) => {
-    const { watchId } = data;
+    const { watchId, preferredAudioLanguage } = data;
     if (!RD_TOKEN || !TMDB_API_KEY) return { error: "Missing server API tokens" };
     const parsed = parseWatchId(watchId);
     try {
@@ -381,37 +382,60 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
       const availResults = await Promise.allSettled(
         candidates.slice(0, checkCount).map((c) => checkInstantAvailability(c.infoHash)),
       );
-      const ranked = candidates.slice(0, checkCount).map((c, i) => ({
-        ...c,
-        isCached:
+      const ranked = candidates.slice(0, checkCount).map((c, i) => {
+        const isCached =
           availResults[i].status === "fulfilled"
             ? (availResults[i] as PromiseFulfilledResult<boolean>).value
-            : false,
-      }));
+            : false;
+
+        // Score for language
+        let langScore = 0;
+        const titleLower = c.title.toLowerCase();
+        const isDubbed = /lat|dual|ita|spa|ger|fre|fra|rus|hin|tel|tam|dub/i.test(titleLower);
+
+        if (preferredAudioLanguage === "en") {
+          if (isDubbed) langScore -= 100; // Heavily penalize foreign dubs if user wants English
+        } else if (preferredAudioLanguage) {
+          // If they want Spanish (es) and it says Lat/Spa, boost it
+          if (preferredAudioLanguage === "es" && /lat|spa|esp/i.test(titleLower)) langScore += 50;
+          if (preferredAudioLanguage === "it" && /ita/i.test(titleLower)) langScore += 50;
+          if (preferredAudioLanguage === "de" && /ger|deu/i.test(titleLower)) langScore += 50;
+          if (preferredAudioLanguage === "fr" && /fre|fra/i.test(titleLower)) langScore += 50;
+        }
+
+        // Score for direct browser playback compatibility (since we bypass HLS)
+        let codecScore = 0;
+        if (titleLower.includes("h265") || titleLower.includes("hevc")) {
+          // Browsers struggle with raw H265/HEVC MKVs (triggers download instead of stream)
+          codecScore -= 50;
+        }
+        if (titleLower.includes("mp4")) codecScore += 20;
+
+        return { ...c, isCached, langScore, codecScore };
+      });
 
       // Sort:
-      // 1. Cached first
-      // 2. Size "Sweet Spot": 1.5 GB to 8 GB is ideal for fast streaming via proxy.
-      // 3. Avoid massive files (>10GB) as they cause fragLoadTimeOut during seeking.
+      // 1. Language matching (avoid wrong dubs)
+      // 2. Codec compatibility (avoid H265 downloads if H264 exists)
+      // 3. Cached first
+      // 4. Size "Sweet Spot"
       ranked.sort((a, b) => {
+        if (a.langScore !== b.langScore) return b.langScore - a.langScore;
+        if (a.codecScore !== b.codecScore) return b.codecScore - a.codecScore;
         if (a.isCached && !b.isCached) return -1;
         if (!a.isCached && b.isCached) return 1;
 
         const sizeA_GB = a.sizeBytes / 1e9;
         const sizeB_GB = b.sizeBytes / 1e9;
 
-        // "Sweet Spot" for fast, high-quality Web-DLs/Light 4K without buckling the proxy
         const isIdealA = sizeA_GB >= 1.5 && sizeA_GB <= 8.5;
         const isIdealB = sizeB_GB >= 1.5 && sizeB_GB <= 8.5;
 
         if (isIdealA && !isIdealB) return -1;
         if (!isIdealA && isIdealB) return 1;
 
-        // If both are outside the sweet spot, prefer the SMALLER one. 
-        // 18GB+ Remux files take too long for the proxy to chunk during timeline seeks.
         return sizeA_GB - sizeB_GB;
       });
-
       const target = ranked[0];
       console.log(
         `[ARC] Selected: "${target.title}" (cached: ${target.isCached}, size: ${(target.sizeBytes / 1e9).toFixed(2)} GB)`,
@@ -661,43 +685,27 @@ export const resolvePlaybackStream = createServerFn({ method: "POST" })
 
       // Always prioritize the highest available quality for Remux
       let transcodeQuality = "full";
-      if (!availableQualityValues.includes("full") && availableQualityValues.includes("1080p_8mbps")) {
+      if (
+        !availableQualityValues.includes("full") &&
+        availableQualityValues.includes("1080p_8mbps")
+      ) {
         transcodeQuality = "1080p_8mbps";
       }
 
       // ── Step 7: Build URLs (Pure Real-Debrid) ───────────────────────────
-      // We are bypassing the MediaFlow Proxy entirely because browsers cannot 
-      // natively stream raw MKV files over HTTP, and the proxy transcode/HLS 
-      // generation times out on 4K files. 
-      // We will rely on Real-Debrid's direct CDN links and let AdvancedPlayer 
+      // We are bypassing the MediaFlow Proxy entirely because browsers cannot
+      // natively stream raw MKV files over HTTP, and the proxy transcode/HLS
+      // generation times out on 4K files.
+      // We will rely on Real-Debrid's direct CDN links and let AdvancedPlayer
       // handle the raw download stream directly, relying on the user's ISP peering.
-      
+
       const filename = unrestricted.filename || "";
       const isMp4 = filename.toLowerCase().endsWith(".mp4");
-      
-      // Legacy RD HLS
-      let rdHlsUrl: string | null = null;
-      if (mediaInfos?.modelUrl) {
-        const audioSlot = selectedAudioId ?? "none";
-        rdHlsUrl = (mediaInfos.modelUrl as string)
-          .replace("{audio}", audioSlot)
-          .replace("{subtitles}", "none")
-          .replace("{audioCodec}", "aac")
-          .replace("{quality}", transcodeQuality)
-          .replace("{format}", "m3u8");
-      } else if (transcodeHlsBase) {
-        rdHlsUrl = `${transcodeHlsBase}/${transcodeQuality}.m3u8`;
-      }
 
       console.log(`[ARC] Stream ready via Direct RD Link. isMp4: ${isMp4}`);
 
       return {
-        streamUrl: isMp4 ? unrestricted.download : rdHlsUrl || unrestricted.download,
-        originalUrl: unrestricted.download, 
-        mp4Url: null,          
-        hlsUrl: rdHlsUrl, 
-        dashUrl: null,
-        preferredFormat: isMp4 ? "original" : "hls", // MKVs must stream via HLS on the browser
+        streamUrl: unrestricted.download,
         bitrateWarning: bitrateDecision.warning,
         availableAudioTracks: audioTracksArray,
         activeAudioTrackId: selectedAudioId,

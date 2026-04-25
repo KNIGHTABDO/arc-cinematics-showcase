@@ -81,7 +81,7 @@ export const getKidsMovies = createServerFn({ method: "GET" })
     const res = await tmdbFetch("/discover/movie", {
       language: data?.language || _defaultLang,
       with_genres: "16,10751", // Animation, Family
-      "certification_country": "US",
+      certification_country: "US",
       "certification.lte": "PG",
       sort_by: "popularity.desc",
     });
@@ -233,7 +233,8 @@ export const discoverMovies = createServerFn({ method: "GET" })
 
     if (data.kidsOnly) {
       const requestedGenres = parseGenreIds(data.genre).filter((id) => KIDS_MOVIE_GENRES.has(id));
-      const safeGenres = requestedGenres.length > 0 ? requestedGenres : Array.from(KIDS_MOVIE_GENRES);
+      const safeGenres =
+        requestedGenres.length > 0 ? requestedGenres : Array.from(KIDS_MOVIE_GENRES);
       params.with_genres = safeGenres.join(",");
       params.certification_country = "US";
       params["certification.lte"] = "PG";
@@ -269,21 +270,29 @@ export const discoverTV = createServerFn({ method: "GET" })
 
 // Genre lists
 export const getMovieGenres = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => z.object({ kidsOnly: z.boolean().optional() }).optional().parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ kidsOnly: z.boolean().optional() }).optional().parse(d),
+  )
   .handler(async ({ data }) => {
     const response = await tmdbFetch("/genre/movie/list");
     if (data?.kidsOnly) {
-      return (response.genres || []).filter((genre: { id: number }) => KIDS_MOVIE_GENRES.has(genre.id));
+      return (response.genres || []).filter((genre: { id: number }) =>
+        KIDS_MOVIE_GENRES.has(genre.id),
+      );
     }
     return response.genres;
   });
 
 export const getTVGenres = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => z.object({ kidsOnly: z.boolean().optional() }).optional().parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ kidsOnly: z.boolean().optional() }).optional().parse(d),
+  )
   .handler(async ({ data }) => {
     const response = await tmdbFetch("/genre/tv/list");
     if (data?.kidsOnly) {
-      return (response.genres || []).filter((genre: { id: number }) => KIDS_TV_GENRES.has(genre.id));
+      return (response.genres || []).filter((genre: { id: number }) =>
+        KIDS_TV_GENRES.has(genre.id),
+      );
     }
     return response.genres;
   });

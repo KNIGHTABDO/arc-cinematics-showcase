@@ -1,0 +1,46 @@
+
+IMPORTANT: The file content has been truncated.
+Status: Showing lines 455-500 of 1878 total lines.
+Action: To read more of the file, you can use the 'start_line' and 'end_line' parameters in a subsequent 'read_file' call. For example, to read the next section of the file, use start_line: 501.
+
+--- FILE CONTENT (truncated) ---
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [activeSub, offsetMs]);
+
+  const switchFormat = useCallback(
+    (format: "dash" | "hls" | "mp4" | "original") => {
+      const url = streamUrls[`${format}Url`];
+      if (!url) return;
+
+      console.log(`[ARC] Switching to format: ${format}`);
+      setSelectedFormat(format);
+      setPreferredFormat(format);
+      setStreamUrl(url);
+      setStreamReady(false);
+      setBuffering(true);
+      setHasRestoredProgress(false);
+    },
+    [streamUrls],
+  );
+
+  const switchToNextStream = useCallback(() => {
+    const next = backupStreams[currentStreamIndex];
+    if (!next) return false;
+
+    setCurrentStreamIndex((idx) => idx + 1);
+    setStreamReady(false);
+    setBuffering(true);
+    setStreamUrl(next);
+    setAudioTracks([]);
+    setActiveAudioTrackIdx(null);
+    hasUserSelectedAudioTrack.current = false;
+    return true;
+  }, [backupStreams, currentStreamIndex]);
+
+  /**
+   * Re-unrestricts the stored rdHostLink to get a fresh CDN URL without re-polling
+   * the full torrent resolution. Called when playback fails (403/404/timeout errors).
+   */

@@ -85,10 +85,7 @@ export function IntroLoader() {
           </span>
           <span className="text-arc-accent">C</span>
         </div>
-        <span
-          ref={lineRef}
-          className="mt-6 block h-px w-40 origin-left bg-arc-text/40"
-        />
+        <span ref={lineRef} className="mt-6 block h-px w-40 origin-left bg-arc-text/40" />
         <span className="label-caps mt-4 text-arc-muted">Cinematic Streaming</span>
       </div>
     </div>

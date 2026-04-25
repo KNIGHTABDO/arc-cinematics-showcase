@@ -19,7 +19,8 @@ const PALETTE: Array<[string, string, string]> = [
 ];
 
 export function gradientFor(seed: string | number, angle = 135): string {
-  const s = typeof seed === "number" ? seed : seed.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const s =
+    typeof seed === "number" ? seed : seed.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const [a, b, c] = PALETTE[s % PALETTE.length];
   return `linear-gradient(${angle}deg, ${a} 0%, ${b} 55%, ${c} 100%)`;
 }

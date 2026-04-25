@@ -49,7 +49,9 @@ function TitlePage() {
   const { movie, popular } = Route.useLoaderData();
   const [tab, setTab] = useState<Tab>("Overview");
   const [isFavorite, setIsFavorite] = useState(false);
-  const [watchProgress, setWatchProgress] = useState<{ progress: number; duration: number } | null>(null);
+  const [watchProgress, setWatchProgress] = useState<{ progress: number; duration: number } | null>(
+    null,
+  );
   const linkCursor = useCursorHover("link");
   const navigate = useNavigate();
   const { profile } = useSettings();
@@ -57,7 +59,9 @@ function TitlePage() {
   const blockedForKids = isKids && !isMovieAllowedForKids(movie);
 
   const releaseYear = movie.release_date?.substring(0, 4) || "Unknown";
-  const duration = movie.runtime ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m` : "Unknown";
+  const duration = movie.runtime
+    ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m`
+    : "Unknown";
   const cast = movie.credits?.cast?.slice(0, 10) || [];
 
   // Check if this movie is already in favorites
@@ -107,15 +111,19 @@ function TitlePage() {
         .eq("imdb_id", movie.id.toString());
       setIsFavorite(false);
     } else {
-      await supabase.from("favorites").insert([{
-        profile_id: profileId,
-        imdb_id: movie.id.toString(),
-      }]);
+      await supabase.from("favorites").insert([
+        {
+          profile_id: profileId,
+          imdb_id: movie.id.toString(),
+        },
+      ]);
       setIsFavorite(true);
     }
   };
 
-  const watchPct = watchProgress ? Math.min((watchProgress.progress / watchProgress.duration) * 100, 100) : 0;
+  const watchPct = watchProgress
+    ? Math.min((watchProgress.progress / watchProgress.duration) * 100, 100)
+    : 0;
 
   if (blockedForKids) {
     return (
@@ -123,7 +131,9 @@ function TitlePage() {
         <Navbar />
         <main className="flex min-h-screen items-center justify-center bg-arc-void px-6 text-center">
           <div className="max-w-md">
-            <h1 className="font-display text-3xl font-extrabold text-arc-text">Content restricted</h1>
+            <h1 className="font-display text-3xl font-extrabold text-arc-text">
+              Content restricted
+            </h1>
             <p className="mt-4 text-sm text-arc-muted">
               This title is not available on kids profiles.
             </p>
@@ -148,7 +158,9 @@ function TitlePage() {
           <div
             className="absolute inset-0 bg-cover bg-center"
             style={{
-              backgroundImage: movie.backdrop_path ? `url(https://image.tmdb.org/t/p/original${movie.backdrop_path})` : "none",
+              backgroundImage: movie.backdrop_path
+                ? `url(https://image.tmdb.org/t/p/original${movie.backdrop_path})`
+                : "none",
               opacity: 0.35,
               filter: "blur(40px)",
               transform: "scale(1.1)",
@@ -166,7 +178,9 @@ function TitlePage() {
                 style={{
                   aspectRatio: "2 / 3",
                   viewTransitionName: `poster-${movie.id}`,
-                  backgroundImage: movie.poster_path ? `url(https://image.tmdb.org/t/p/w780${movie.poster_path})` : "none",
+                  backgroundImage: movie.poster_path
+                    ? `url(https://image.tmdb.org/t/p/w780${movie.poster_path})`
+                    : "none",
                 }}
               >
                 <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(255,255,255,0.18),transparent_60%)]" />
@@ -206,11 +220,16 @@ function TitlePage() {
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link to="/watch/$id" params={{ id: movie.id.toString() }} className="contents">
                   <MagneticButton variant="primary" className="h-13 px-8 relative overflow-hidden">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
                     {watchProgress ? "Continue Watching" : "Stream Now"}
                     {watchProgress && (
                       <span className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/20">
-                        <span className="absolute left-0 top-0 h-full bg-arc-accent transition-all" style={{ width: `${watchPct}%` }} />
+                        <span
+                          className="absolute left-0 top-0 h-full bg-arc-accent transition-all"
+                          style={{ width: `${watchPct}%` }}
+                        />
                       </span>
                     )}
                   </MagneticButton>
@@ -267,12 +286,17 @@ function TitlePage() {
             <Tabs.Content value="Cast" className="pt-8">
               <div className="no-scrollbar flex gap-6 overflow-x-auto pb-4">
                 {cast.map((c: any) => (
-                  <div key={c.id} className="flex w-[120px] shrink-0 flex-col items-center text-center">
+                  <div
+                    key={c.id}
+                    className="flex w-[120px] shrink-0 flex-col items-center text-center"
+                  >
                     <div
                       className="h-[72px] w-[72px] rounded-full border border-white/10 bg-cover bg-center"
                       style={{
-                        backgroundImage: c.profile_path ? `url(https://image.tmdb.org/t/p/w185${c.profile_path})` : "none",
-                        backgroundColor: "var(--arc-surface-2)"
+                        backgroundImage: c.profile_path
+                          ? `url(https://image.tmdb.org/t/p/w185${c.profile_path})`
+                          : "none",
+                        backgroundColor: "var(--arc-surface-2)",
                       }}
                     />
                     <div className="mt-3 text-sm font-medium text-arc-text">{c.name}</div>
@@ -290,7 +314,6 @@ function TitlePage() {
               </div>
             </Tabs.Content>
           </Tabs.Root>
-
         </div>
       </main>
     </>

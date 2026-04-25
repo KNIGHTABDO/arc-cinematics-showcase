@@ -14,13 +14,13 @@ export interface TMDBMovie {
   first_air_date?: string; // TV shows
   overview: string;
   media_type?: string;
-  progress?: number; 
+  progress?: number;
 }
 
 export function ContinueCard({ movie }: { movie: TMDBMovie }) {
   const cursor = useCursorHover("card");
   const pct = (movie.progress ?? 0) * 100;
-  
+
   // Real duration formatting isn't immediately available from basic TMDB lists without details append,
   // so we show generic "Resume" instead, unless loaded from DB with saved duration.
   const remaining = movie.progress ? "Resume" : null;
@@ -31,13 +31,19 @@ export function ContinueCard({ movie }: { movie: TMDBMovie }) {
       params={{ id: movie.id.toString() }}
       {...cursor}
       className="group relative block shrink-0 overflow-hidden rounded-xl border border-white/[0.07] transition-all duration-300 hover:border-arc-accent/40 hover:shadow-[0_20px_60px_-15px_var(--arc-glow)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arc-accent bg-arc-surface-2"
-      style={{ width: "clamp(260px, 22vw, 340px)", aspectRatio: "16 / 9", viewTransitionName: `continue-${movie.id}` }}
+      style={{
+        width: "clamp(260px, 22vw, 340px)",
+        aspectRatio: "16 / 9",
+        viewTransitionName: `continue-${movie.id}`,
+      }}
     >
       {/* Real TMDB Backdrop image */}
       <div
         className="absolute inset-0 bg-cover bg-center transition-[filter,transform] duration-500 group-hover:scale-[1.04] group-hover:brightness-110"
         style={{
-          backgroundImage: movie.backdrop_path ? `url(https://image.tmdb.org/t/p/w780${movie.backdrop_path})` : "none",
+          backgroundImage: movie.backdrop_path
+            ? `url(https://image.tmdb.org/t/p/w780${movie.backdrop_path})`
+            : "none",
         }}
       />
       {/* Inner gloss */}
@@ -62,7 +68,9 @@ export function ContinueCard({ movie }: { movie: TMDBMovie }) {
               {movie.title || movie.name}
             </div>
             {movie.release_date && (
-              <div className="mt-0.5 text-[10px] text-white/60">{movie.release_date.substring(0, 4)}</div>
+              <div className="mt-0.5 text-[10px] text-white/60">
+                {movie.release_date.substring(0, 4)}
+              </div>
             )}
           </div>
           {remaining && (
@@ -93,7 +101,13 @@ interface MovieCardProps {
   linkPrefix?: string;
 }
 
-export function MovieCard({ movie, width = 200, showProgress, onRemove, linkPrefix }: MovieCardProps) {
+export function MovieCard({
+  movie,
+  width = 200,
+  showProgress,
+  onRemove,
+  linkPrefix,
+}: MovieCardProps) {
   const cursor = useCursorHover("card");
   const href = linkPrefix ? `${linkPrefix}/${movie.id}` : `/title/${movie.id}`;
   return (
@@ -101,10 +115,15 @@ export function MovieCard({ movie, width = 200, showProgress, onRemove, linkPref
       href={href}
       {...cursor}
       className="group relative block shrink-0 overflow-hidden rounded-[10px] border border-white/[0.06] transition-all duration-300 hover:border-arc-accent/30 hover:shadow-[0_18px_50px_-15px_var(--arc-glow)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arc-accent bg-arc-surface-2"
-      style={{ width, aspectRatio: "2 / 3", viewTransitionName: `poster-${movie.id}` }}>
+      style={{ width, aspectRatio: "2 / 3", viewTransitionName: `poster-${movie.id}` }}
+    >
       <div
         className="absolute inset-0 bg-cover bg-center transition-[filter,transform] duration-500 group-hover:scale-[1.04] group-hover:brightness-110 group-hover:saturate-150"
-        style={{ backgroundImage: movie.poster_path ? `url(https://image.tmdb.org/t/p/w500${movie.poster_path})` : "none" }}
+        style={{
+          backgroundImage: movie.poster_path
+            ? `url(https://image.tmdb.org/t/p/w500${movie.poster_path})`
+            : "none",
+        }}
       />
       {/* Subtle inner texture */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(255,255,255,0.12),transparent_60%)]" />
@@ -129,7 +148,9 @@ export function MovieCard({ movie, width = 200, showProgress, onRemove, linkPref
           {movie.title || movie.name}
         </div>
         <div className="mt-1 flex items-center gap-2 text-[10px] text-white/70">
-          <span className="tabular">★ {movie.vote_average ? movie.vote_average.toFixed(1) : "N/A"}</span>
+          <span className="tabular">
+            ★ {movie.vote_average ? movie.vote_average.toFixed(1) : "N/A"}
+          </span>
           <span>·</span>
           <span>{(movie.release_date || movie.first_air_date || "").substring(0, 4)}</span>
         </div>
@@ -150,7 +171,15 @@ export function MovieCard({ movie, width = 200, showProgress, onRemove, linkPref
   );
 }
 
-export function TrendingCard({ movie, rank, linkPrefix }: { movie: TMDBMovie; rank: number; linkPrefix?: string }) {
+export function TrendingCard({
+  movie,
+  rank,
+  linkPrefix,
+}: {
+  movie: TMDBMovie;
+  rank: number;
+  linkPrefix?: string;
+}) {
   return (
     <div className={cn("relative flex shrink-0 items-end gap-0")}>
       <span
