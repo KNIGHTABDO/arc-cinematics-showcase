@@ -65,6 +65,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
           if (!disposed) setIsInitialized(true);
 
           // Make the React app transparent so we can see the player underneath
+          document.documentElement.style.backgroundColor = "transparent";
           document.body.style.backgroundColor = "transparent";
           const appRoot = document.getElementById("root");
           if (appRoot) {
@@ -143,6 +144,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
         if (unlisten) unlisten();
 
         // Revert transparency immediately so UI doesn't look weird if we navigate away
+        document.documentElement.style.backgroundColor = "";
         document.body.style.backgroundColor = "";
         const appRoot = document.getElementById("root");
         if (appRoot) {
