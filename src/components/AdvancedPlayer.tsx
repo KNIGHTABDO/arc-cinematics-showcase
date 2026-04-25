@@ -97,9 +97,15 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
           // Load the video file
           await command("loadfile", [url]);
 
-          // Load subtitle if provided
+          // Wait a brief moment to let mpv load the core file before injecting subtitles
+          // This prevents "Failed to execute command 'sub-add': error running command"
           if (subtitleBlobUrl) {
-            await command("sub-add", [subtitleBlobUrl]);
+            setTimeout(() => {
+              if (disposed) return;
+              command("sub-add", [subtitleBlobUrl]).catch((e) =>
+                console.warn("[ARC] TauriMpv → Could not add subtitles:", e),
+              );
+            }, 1000);
           }
 
           // Set start time
@@ -124,9 +130,11 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
         disposed = true;
         if (unlisten) unlisten();
 
-        // Ensure we stop player
-        command("stop").catch(console.error);
-        destroy().catch(console.error);
+        // Use a slight delay before destroying to handle React StrictMode fast unmount/remounts gracefully
+        setTimeout(() => {
+          command("stop").catch(() => {});
+          destroy().catch(() => {});
+        }, 100);
 
         // Revert transparency
         document.body.style.backgroundColor = "";
