@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useImperativeHandle } from "react";
 import {
   init,
   command,
@@ -30,12 +30,77 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
       onPlay,
       autoPlay,
       onError,
+      onLoadedMetadata,
       ...props
     },
     forwardedRef,
   ) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [isInitialized, setIsInitialized] = useState(false);
+
+    // --- Native ↔ React Bridge ---
+    // watch.$id.tsx relies heavily on the HTML5 <video> API (currentTime, duration, play(), pause()).
+    // Since we removed the <video> tag, we must mock its behavior and pipe commands to libmpv natively.
+    const stateRef = useRef({
+      currentTime: 0,
+      duration: 0,
+      paused: false,
+      volume: 1,
+      muted: false,
+    });
+    const listenersRef = useRef<Record<string, Function[]>>({ pause: [], play: [] });
+
+    useImperativeHandle(forwardedRef, () => {
+      const el = {
+        get currentTime() {
+          return stateRef.current.currentTime;
+        },
+        set currentTime(val: number) {
+          stateRef.current.currentTime = val;
+          setProperty("time-pos", val).catch(console.error);
+        },
+        get duration() {
+          return stateRef.current.duration;
+        },
+        get paused() {
+          return stateRef.current.paused;
+        },
+        get volume() {
+          return stateRef.current.volume;
+        },
+        set volume(val: number) {
+          stateRef.current.volume = val;
+          setProperty("volume", val * 100).catch(console.error); // mpv volume is 0-100
+        },
+        get muted() {
+          return stateRef.current.muted;
+        },
+        set muted(val: boolean) {
+          stateRef.current.muted = val;
+          setProperty("mute", val ? "yes" : "no").catch(console.error);
+        },
+        play: async () => {
+          stateRef.current.paused = false;
+          await setProperty("pause", false).catch(console.error);
+        },
+        pause: () => {
+          stateRef.current.paused = true;
+          setProperty("pause", true).catch(console.error);
+        },
+        addEventListener: (event: string, cb: any) => {
+          if (!listenersRef.current[event]) listenersRef.current[event] = [];
+          listenersRef.current[event].push(cb);
+        },
+        removeEventListener: (event: string, cb: any) => {
+          if (!listenersRef.current[event]) return;
+          listenersRef.current[event] = listenersRef.current[event].filter((f) => f !== cb);
+        },
+        audioTracks: [],
+        videoTracks: [],
+        textTracks: [],
+      };
+      return el as unknown as HTMLVideoElement;
+    });
 
     useEffect(() => {
       let unlisten: (() => void) | null = null;
@@ -84,12 +149,24 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
 
             switch (name) {
               case "time-pos":
-                if (data !== null && onTimeUpdate) {
-                  // Simulate a synthetic event for React
-                  const event = {
-                    currentTarget: { currentTime: data },
-                  } as unknown as React.SyntheticEvent<HTMLVideoElement, Event>;
-                  onTimeUpdate(event);
+                if (data !== null) {
+                  stateRef.current.currentTime = data as number;
+                  if (onTimeUpdate) {
+                    const event = {
+                      currentTarget: { currentTime: data },
+                    } as unknown as React.SyntheticEvent<HTMLVideoElement, Event>;
+                    onTimeUpdate(event);
+                  }
+                }
+                break;
+              case "duration":
+                if (data !== null) {
+                  const wasZero = stateRef.current.duration === 0;
+                  stateRef.current.duration = data as number;
+                  // Fire onLoadedMetadata the first time we get a valid duration from mpv
+                  if (wasZero && data > 0 && onLoadedMetadata) {
+                    onLoadedMetadata({ currentTarget: { duration: data } } as any);
+                  }
                 }
                 break;
               case "eof-reached":
@@ -98,10 +175,13 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
                 }
                 break;
               case "pause":
-                if (data === true && onPause) {
-                  onPause({} as React.SyntheticEvent<HTMLVideoElement, Event>);
-                } else if (data === false && onPlay) {
-                  onPlay({} as React.SyntheticEvent<HTMLVideoElement, Event>);
+                stateRef.current.paused = data as boolean;
+                if (data === true) {
+                  if (onPause) onPause({} as React.SyntheticEvent<HTMLVideoElement, Event>);
+                  listenersRef.current["pause"]?.forEach((cb) => cb());
+                } else if (data === false) {
+                  if (onPlay) onPlay({} as React.SyntheticEvent<HTMLVideoElement, Event>);
+                  listenersRef.current["play"]?.forEach((cb) => cb());
                 }
                 break;
             }

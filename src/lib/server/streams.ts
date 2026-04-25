@@ -406,23 +406,19 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         // Penalize CAM/TS rips (garbage audio/video quality)
         if (isCam) langScore -= 5000;
 
-        // Score for direct browser playback compatibility (CRITICAL without HLS)
+        // Score for native libmpv playback (BOOST high quality formats)
         let codecScore = 0;
 
-        // Browsers strictly DO NOT support AC3, EAC3, TrueHD, or DTS natively.
-        // If selected, the video will play with NO SOUND.
-        if (/ac3|eac3|dd5\.1|truehd|dts|atmos|pcm/i.test(titleLower)) codecScore -= 5000;
+        // libmpv loves high-end audio, boost them!
+        if (/truehd|dts-hd|dts|atmos|pcm/i.test(titleLower)) codecScore += 2000;
+        if (/eac3|ac3|dd5\.1/i.test(titleLower)) codecScore += 1000;
 
-        // Browsers often force download on HEVC/x265 inside MKV containers
-        // We MUST penalize HEVC so that an H264 stream is chosen instead if available.
-        if (/hevc|h265|x265/i.test(titleLower)) codecScore -= 5000;
+        // Boost modern high-efficiency video codecs
+        if (/hevc|h265|x265/i.test(titleLower)) codecScore += 2000;
+        if (/remux/i.test(titleLower)) codecScore += 3000;
+        if (/hdr|dv|dolby vision/i.test(titleLower)) codecScore += 1000;
 
-        // Boost formats we know work well natively in browsers
-        if (/aac|opus|mp3/i.test(titleLower)) codecScore += 2000;
-        if (/h264|x264|avc/i.test(titleLower)) codecScore += 2000;
-        if (titleLower.includes("mp4")) codecScore += 1000;
-
-        // Score for Quality & Size (to prevent massive freezing MKVs)
+        // Score for Quality (libmpv can handle massive files)
         let qualityScore = 0;
         const is4k = /2160|4k|uhd/i.test(titleLower);
         const is8k = /4320|8k/i.test(titleLower);
@@ -430,49 +426,40 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         const is720 = /720/i.test(titleLower);
         const sizeGB = c.sizeBytes / 1e9;
 
-        // Massive files (>15GB) freeze browsers during direct HTTP streaming.
-        if (sizeGB > 25) qualityScore -= 5000;
-        else if (sizeGB > 15) qualityScore -= 2000;
-
         if (preferredQuality === "1080") {
-          if (is1080) qualityScore += 1000;
+          if (is1080) qualityScore += 3000;
           if (is4k || is8k) qualityScore -= 3000; // Strict downgrade
         } else if (preferredQuality === "720") {
-          if (is720) qualityScore += 1000;
+          if (is720) qualityScore += 3000;
           if (is1080 || is4k || is8k) qualityScore -= 3000;
         } else if (preferredQuality === "2160") {
-          if (is4k) qualityScore += 1000;
+          if (is4k) qualityScore += 3000;
           if (is8k) qualityScore -= 3000;
         } else {
-          // Auto: Prefer 1080p for stability, allow 4K if small enough
+          // Auto: Prefer absolute highest quality (4K Remux)
+          if (is4k) qualityScore += 3000;
           if (is1080) qualityScore += 1000;
-          if (is4k) qualityScore += 500;
-          if (is8k) qualityScore -= 3000;
+          if (is8k) qualityScore -= 3000; // 8K is usually overkill/fake
         }
 
         return { ...c, isCached, langScore, codecScore, qualityScore, sizeGB };
       });
 
       // Sort:
-      // 1. Quality & Size limits (prevents freezing/crashing)
-      // 2. Codec compatibility is KING when HLS is disabled.
-      // 3. Language matching (avoid wrong dubs and CAM rips)
+      // 1. Language matching (avoid wrong dubs and CAM rips)
+      // 2. Quality limits
+      // 3. Codec & Remux boosts
       // 4. Cached first
-      // 5. Size "Sweet Spot" (for tie breaks)
+      // 5. Size (Bigger is usually better bitrate for native playback)
       ranked.sort((a, b) => {
+        if (a.langScore !== b.langScore) return b.langScore - a.langScore;
         if (a.qualityScore !== b.qualityScore) return b.qualityScore - a.qualityScore;
         if (a.codecScore !== b.codecScore) return b.codecScore - a.codecScore;
-        if (a.langScore !== b.langScore) return b.langScore - a.langScore;
         if (a.isCached && !b.isCached) return -1;
         if (!a.isCached && b.isCached) return 1;
 
-        const isIdealA = a.sizeGB >= 1.5 && a.sizeGB <= 8.5;
-        const isIdealB = b.sizeGB >= 1.5 && b.sizeGB <= 8.5;
-
-        if (isIdealA && !isIdealB) return -1;
-        if (!isIdealA && isIdealB) return 1;
-
-        return a.sizeGB - b.sizeGB;
+        // Native app handles massive files, so bigger = better bitrate
+        return b.sizeGB - a.sizeGB;
       });
       const target = ranked[0];
       console.log(
