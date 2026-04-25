@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   init,
   command,
@@ -7,6 +7,9 @@ import {
   destroy,
   type MpvObservableProperty,
 } from "tauri-plugin-libmpv-api";
+
+// Global variable to handle React StrictMode rapid unmount/remount
+let destroyTimeout: ReturnType<typeof setTimeout> | null = null;
 
 interface AdvancedPlayerProps extends React.VideoHTMLAttributes<HTMLVideoElement> {
   url?: string | null;
@@ -32,10 +35,17 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
     forwardedRef,
   ) => {
     const containerRef = useRef<HTMLDivElement>(null);
+    const [isInitialized, setIsInitialized] = useState(false);
 
     useEffect(() => {
       let unlisten: (() => void) | null = null;
       let disposed = false;
+
+      // If a previous unmount scheduled a destruction, cancel it because we are mounting again!
+      if (destroyTimeout) {
+        clearTimeout(destroyTimeout);
+        destroyTimeout = null;
+      }
 
       const setupMpv = async () => {
         if (!url) return;
@@ -51,6 +61,8 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
               "force-window": "yes",
             },
           });
+
+          if (!disposed) setIsInitialized(true);
 
           // Make the React app transparent so we can see the player underneath
           document.body.style.backgroundColor = "transparent";
@@ -130,38 +142,41 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
         disposed = true;
         if (unlisten) unlisten();
 
-        // Use a slight delay before destroying to handle React StrictMode fast unmount/remounts gracefully
-        setTimeout(() => {
-          command("stop").catch(() => {});
-          destroy().catch(() => {});
-        }, 100);
-
-        // Revert transparency
+        // Revert transparency immediately so UI doesn't look weird if we navigate away
         document.body.style.backgroundColor = "";
         const appRoot = document.getElementById("root");
         if (appRoot) {
           appRoot.style.backgroundColor = "";
         }
+
+        // Use a slight delay before destroying to handle React StrictMode fast unmount/remounts gracefully.
+        // If the component remounts quickly (like in StrictMode), the new mount will cancel this timeout.
+        destroyTimeout = setTimeout(() => {
+          command("stop").catch(() => {});
+          destroy().catch(() => {});
+          if (!disposed) setIsInitialized(false);
+        }, 500);
       };
-    }, [
-      url,
-      subtitleBlobUrl,
-      startTime,
-      autoPlay,
-      onTimeUpdate,
-      onEnded,
-      onPause,
-      onPlay,
-      onError,
-    ]);
+    }, [url]); // Only re-run if URL changes, do NOT re-run on time/subtitle updates
 
     return (
       <div
         ref={containerRef}
         className={className}
-        style={{ width: "100%", height: "100%", backgroundColor: "transparent" }}
-        // The actual video is rendered natively by mpv behind the webview window
-      />
+        style={{
+          width: "100%",
+          height: "100%",
+          backgroundColor: "transparent",
+          position: "relative",
+        }}
+      >
+        {/* The actual video is rendered natively by mpv behind the webview window */}
+        {!isInitialized && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white z-50">
+            Initializing native player engine...
+          </div>
+        )}
+      </div>
     );
   },
 );
