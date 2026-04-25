@@ -1015,7 +1015,7 @@ function WatchPage() {
 
   return (
     <div
-      className="fixed inset-0 z-[9999] bg-black select-none"
+      className="fixed inset-0 z-[9999] bg-transparent select-none"
       onMouseMove={resetControlsTimer}
       onClick={resetControlsTimer}
       style={{ cursor: showControls ? "default" : "none" }}
