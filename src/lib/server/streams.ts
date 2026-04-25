@@ -409,7 +409,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         // Score for direct browser playback compatibility (CRITICAL without HLS)
         let codecScore = 0;
 
-        // Browsers strictly DO NOT support AC3, EAC3, TrueHD, or DTS natively. 
+        // Browsers strictly DO NOT support AC3, EAC3, TrueHD, or DTS natively.
         // If selected, the video will play with NO SOUND.
         if (/ac3|eac3|dd5\.1|truehd|dts|atmos|pcm/i.test(titleLower)) codecScore -= 5000;
 
@@ -418,7 +418,7 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         if (/hevc|h265|x265/i.test(titleLower)) codecScore -= 5000;
 
         // Boost formats we know work well natively in browsers
-        if (/aac|opus|mp3/i.test(titleLower)) codecScore += 2000; 
+        if (/aac|opus|mp3/i.test(titleLower)) codecScore += 2000;
         if (/h264|x264|avc/i.test(titleLower)) codecScore += 2000;
         if (titleLower.includes("mp4")) codecScore += 1000;
 

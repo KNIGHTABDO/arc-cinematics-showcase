@@ -5,7 +5,7 @@
   "identifier": "com.tauri.dev",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun dev",
     "beforeBuildCommand": "bun build"
   },
@@ -34,8 +34,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "lib/**/*"
-    ]
+    "resources": ["lib/**/*"]
   }
 }

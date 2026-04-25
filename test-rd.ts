@@ -1,8 +1,11 @@
 async function checkInstantAvailability(hash: string) {
   const RD_TOKEN = process.env.VITE_REAL_DEBRID_TOKEN;
-  const res = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/instantAvailability/${hash.toLowerCase()}`, {
-    headers: { Authorization: `Bearer ${RD_TOKEN}` }
-  });
+  const res = await fetch(
+    `https://api.real-debrid.com/rest/1.0/torrents/instantAvailability/${hash.toLowerCase()}`,
+    {
+      headers: { Authorization: `Bearer ${RD_TOKEN}` },
+    },
+  );
   if (!res.ok) return false;
   const data = await res.json();
   const hosters = data[hash.toLowerCase()];
@@ -10,25 +13,30 @@ async function checkInstantAvailability(hash: string) {
   return true;
 }
 
-async function testScoring(imdbId: string, titleName: string, preferredAudioLanguage = "en", preferredQuality = "auto") {
+async function testScoring(
+  imdbId: string,
+  titleName: string,
+  preferredAudioLanguage = "en",
+  preferredQuality = "auto",
+) {
   console.log(`\n===========================================`);
   console.log(`TESTING: ${titleName} (${imdbId})`);
   console.log(`===========================================`);
 
   const RD_TOKEN = process.env.VITE_REAL_DEBRID_TOKEN;
   const url = `https://torrentio.strem.fun/realdebrid=${RD_TOKEN}/stream/movie/${imdbId}.json`;
-  
+
   const res = await fetch(url);
   const data = await res.json();
-  
+
   const rawStreams = Array.isArray(data?.streams) ? data.streams : [];
 
   let candidates = rawStreams
     .filter((s: any) => typeof s?.name === "string" && s.name.includes("[RD+]"))
     .map((s: any) => {
       const parts = s.url.split("/");
-      const infoHash = parts[parts.length - 1]; 
-      
+      const infoHash = parts[parts.length - 1];
+
       const title = String(s?.title || s?.name || "Unknown");
       let sizeBytes = 0;
       const sizeMatch = title.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
@@ -43,11 +51,12 @@ async function testScoring(imdbId: string, titleName: string, preferredAudioLang
 
   const checkCount = Math.min(candidates.length, 15);
   const availResults = await Promise.allSettled(
-    candidates.slice(0, checkCount).map((c) => checkInstantAvailability(c.infoHash))
+    candidates.slice(0, checkCount).map((c) => checkInstantAvailability(c.infoHash)),
   );
 
   const ranked = candidates.slice(0, checkCount).map((c, i) => {
-    const isCached = availResults[i].status === "fulfilled" ? (availResults[i] as any).value : false;
+    const isCached =
+      availResults[i].status === "fulfilled" ? (availResults[i] as any).value : false;
 
     let langScore = 0;
     const titleLower = c.title.toLowerCase();
@@ -79,19 +88,19 @@ async function testScoring(imdbId: string, titleName: string, preferredAudioLang
     else if (sizeGB > 15) qualityScore -= 2000;
 
     if (preferredQuality === "1080") {
-        if (is1080) qualityScore += 1000;
-        if (is4k || is8k) qualityScore -= 3000; // Strict downgrade
+      if (is1080) qualityScore += 1000;
+      if (is4k || is8k) qualityScore -= 3000; // Strict downgrade
     } else if (preferredQuality === "720") {
-        if (is720) qualityScore += 1000;
-        if (is1080 || is4k || is8k) qualityScore -= 3000;
+      if (is720) qualityScore += 1000;
+      if (is1080 || is4k || is8k) qualityScore -= 3000;
     } else if (preferredQuality === "2160") {
-        if (is4k) qualityScore += 1000;
-        if (is8k) qualityScore -= 3000;
+      if (is4k) qualityScore += 1000;
+      if (is8k) qualityScore -= 3000;
     } else {
-        // Auto
-        if (is1080) qualityScore += 1000;
-        if (is4k) qualityScore += 500;
-        if (is8k) qualityScore -= 3000;
+      // Auto
+      if (is1080) qualityScore += 1000;
+      if (is4k) qualityScore += 500;
+      if (is8k) qualityScore -= 3000;
     }
 
     return { ...c, isCached, langScore, codecScore, qualityScore, sizeGB };
@@ -103,7 +112,7 @@ async function testScoring(imdbId: string, titleName: string, preferredAudioLang
     if (a.langScore !== b.langScore) return b.langScore - a.langScore;
     if (a.isCached && !b.isCached) return -1;
     if (!a.isCached && b.isCached) return 1;
-    
+
     const isIdealA = a.sizeGB >= 1.5 && a.sizeGB <= 8.5;
     const isIdealB = b.sizeGB >= 1.5 && b.sizeGB <= 8.5;
 
@@ -115,9 +124,11 @@ async function testScoring(imdbId: string, titleName: string, preferredAudioLang
 
   console.log(`\n--- TOP 3 SELECTIONS ---`);
   ranked.slice(0, 3).forEach((r, i) => {
-      console.log(`\n#${i + 1}: ${r.sizeGB.toFixed(2)} GB | Cached: ${r.isCached}`);
-      console.log(`Title: ${r.title.replace(/\n/g, ' ')}`);
-      console.log(`Scores -> Codec: ${r.codecScore}, Quality: ${r.qualityScore}, Lang: ${r.langScore}`);
+    console.log(`\n#${i + 1}: ${r.sizeGB.toFixed(2)} GB | Cached: ${r.isCached}`);
+    console.log(`Title: ${r.title.replace(/\n/g, " ")}`);
+    console.log(
+      `Scores -> Codec: ${r.codecScore}, Quality: ${r.qualityScore}, Lang: ${r.langScore}`,
+    );
   });
 }
 

@@ -1,5 +1,12 @@
 import React, { useEffect, useRef } from "react";
-import { init, command, setProperty, observeProperties, destroy, type MpvObservableProperty } from "tauri-plugin-libmpv-api";
+import {
+  init,
+  command,
+  setProperty,
+  observeProperties,
+  destroy,
+  type MpvObservableProperty,
+} from "tauri-plugin-libmpv-api";
 
 interface AdvancedPlayerProps extends React.VideoHTMLAttributes<HTMLVideoElement> {
   url?: string | null;
@@ -8,7 +15,22 @@ interface AdvancedPlayerProps extends React.VideoHTMLAttributes<HTMLVideoElement
 }
 
 export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerProps>(
-  ({ url, subtitleBlobUrl, startTime, className, onTimeUpdate, onEnded, onPause, onPlay, autoPlay, onError, ...props }, forwardedRef) => {
+  (
+    {
+      url,
+      subtitleBlobUrl,
+      startTime,
+      className,
+      onTimeUpdate,
+      onEnded,
+      onPause,
+      onPlay,
+      autoPlay,
+      onError,
+      ...props
+    },
+    forwardedRef,
+  ) => {
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -41,7 +63,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
             ["pause", "flag"],
             ["time-pos", "double", "none"],
             ["duration", "double", "none"],
-            ["eof-reached", "flag", "none"]
+            ["eof-reached", "flag", "none"],
           ] as const satisfies MpvObservableProperty[];
 
           unlisten = await observeProperties(OBSERVED_PROPERTIES, ({ name, data }) => {
@@ -52,7 +74,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
                 if (data !== null && onTimeUpdate) {
                   // Simulate a synthetic event for React
                   const event = {
-                    currentTarget: { currentTime: data }
+                    currentTarget: { currentTime: data },
                   } as unknown as React.SyntheticEvent<HTMLVideoElement, Event>;
                   onTimeUpdate(event);
                 }
@@ -74,7 +96,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
 
           // Load the video file
           await command("loadfile", [url]);
-          
+
           // Load subtitle if provided
           if (subtitleBlobUrl) {
             await command("sub-add", [subtitleBlobUrl]);
@@ -86,13 +108,12 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
           }
 
           if (autoPlay === false) {
-             await setProperty("pause", true);
+            await setProperty("pause", true);
           }
-
         } catch (error) {
           console.error("[ARC] TauriMpv → Failed to initialize or play:", error);
           if (onError) {
-             onError(new Event("error") as any);
+            onError(new Event("error") as any);
           }
         }
       };
@@ -102,11 +123,11 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
       return () => {
         disposed = true;
         if (unlisten) unlisten();
-        
+
         // Ensure we stop player
         command("stop").catch(console.error);
         destroy().catch(console.error);
-        
+
         // Revert transparency
         document.body.style.backgroundColor = "";
         const appRoot = document.getElementById("root");
@@ -114,12 +135,22 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
           appRoot.style.backgroundColor = "";
         }
       };
-    }, [url, subtitleBlobUrl, startTime, autoPlay, onTimeUpdate, onEnded, onPause, onPlay, onError]);
+    }, [
+      url,
+      subtitleBlobUrl,
+      startTime,
+      autoPlay,
+      onTimeUpdate,
+      onEnded,
+      onPause,
+      onPlay,
+      onError,
+    ]);
 
     return (
-      <div 
-        ref={containerRef} 
-        className={className} 
+      <div
+        ref={containerRef}
+        className={className}
         style={{ width: "100%", height: "100%", backgroundColor: "transparent" }}
         // The actual video is rendered natively by mpv behind the webview window
       />
