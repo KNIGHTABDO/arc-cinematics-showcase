@@ -409,17 +409,18 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         // Score for direct browser playback compatibility (CRITICAL without HLS)
         let codecScore = 0;
 
-        // Browsers cannot stream TrueHD or DTS audio. They will play video with no sound.
-        if (/truehd|dts|flac|atmos|pcm/i.test(titleLower)) codecScore -= 1000;
+        // Browsers strictly DO NOT support AC3, EAC3, TrueHD, or DTS natively. 
+        // If selected, the video will play with NO SOUND.
+        if (/ac3|eac3|dd5\.1|truehd|dts|atmos|pcm/i.test(titleLower)) codecScore -= 5000;
 
         // Browsers often force download on HEVC/x265 inside MKV containers
         // We MUST penalize HEVC so that an H264 stream is chosen instead if available.
-        if (/hevc|h265|x265/i.test(titleLower)) codecScore -= 2000;
+        if (/hevc|h265|x265/i.test(titleLower)) codecScore -= 5000;
 
         // Boost formats we know work well natively in browsers
-        if (/h264|x264|avc/i.test(titleLower)) codecScore += 1000;
-        if (/aac|eac3|ac3|dd5\.1/i.test(titleLower)) codecScore += 500; // Browsers love AAC/EAC3
-        if (titleLower.includes("mp4")) codecScore += 500;
+        if (/aac|opus|mp3/i.test(titleLower)) codecScore += 2000; 
+        if (/h264|x264|avc/i.test(titleLower)) codecScore += 2000;
+        if (titleLower.includes("mp4")) codecScore += 1000;
 
         // Score for Quality & Size (to prevent massive freezing MKVs)
         let qualityScore = 0;
