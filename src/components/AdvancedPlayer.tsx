@@ -33,7 +33,7 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
         const p = video.play();
         if (p !== undefined) {
           p.catch((err) => {
-            if (err.name !== "AbortError") {
+            if (err.name !== "AbortError" && err.name !== "NotAllowedError") {
               console.warn("[ARC] Autoplay prevented:", err);
             }
           });
@@ -129,10 +129,20 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
         if (startTime && startTime > 0) video.currentTime = startTime;
         if (props.autoPlay) video.addEventListener("loadedmetadata", handlePlay, { once: true });
 
-        const onErr = () => {
+        const onErr = (e: Event) => {
           if (!disposed) {
-            console.error(`[ARC] Direct playback error on ${url}`);
-            if (props.onError) props.onError(new Event("error") as any);
+            const error = video.error;
+            // MEDIA_ERR_SRC_NOT_SUPPORTED (4) is common for MKVs if the browser
+            // is still trying to buffer or figure out the codec. We only hard fail on fatal network drops.
+            if (error?.code === 4) {
+              console.warn(
+                `[ARC] Browser threw MEDIA_ERR_SRC_NOT_SUPPORTED on ${url}. This might mean the video codec is unsupported, or it's a raw MKV. Waiting...`,
+              );
+              // Don't trigger the onError prop immediately, let the user manually click retry if it hangs forever.
+            } else {
+              console.error(`[ARC] Direct playback error on ${url}: Code ${error?.code}`);
+              if (props.onError) props.onError(e as any);
+            }
           }
         };
         video.addEventListener("error", onErr);

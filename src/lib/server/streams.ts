@@ -403,25 +403,31 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
           if (preferredAudioLanguage === "fr" && /fre|fra/i.test(titleLower)) langScore += 50;
         }
 
-        // Score for direct browser playback compatibility (since we bypass HLS)
+        // Score for direct browser playback compatibility (CRITICAL without HLS)
         let codecScore = 0;
-        if (titleLower.includes("h265") || titleLower.includes("hevc")) {
-          // Browsers struggle with raw H265/HEVC MKVs (triggers download instead of stream)
-          codecScore -= 50;
-        }
-        if (titleLower.includes("mp4")) codecScore += 20;
+
+        // Note: Edge, Safari, and modern Chrome can often play HEVC (x265) directly if the
+        // container is compatible, so we shouldn't ban it completely. However, audio is strict.
+
+        // Browsers cannot stream TrueHD or DTS audio. They will play video with no sound.
+        if (/truehd|dts|flac|atmos/i.test(titleLower)) codecScore -= 1000;
+
+        // Boost formats we know work well natively in browsers
+        if (/h264|x264|avc/i.test(titleLower)) codecScore += 200;
+        if (/aac|eac3|ac3|dd5\.1/i.test(titleLower)) codecScore += 500; // Browsers love AAC/EAC3
+        if (titleLower.includes("mp4")) codecScore += 100;
 
         return { ...c, isCached, langScore, codecScore };
       });
 
       // Sort:
-      // 1. Language matching (avoid wrong dubs)
-      // 2. Codec compatibility (avoid H265 downloads if H264 exists)
+      // 1. Codec compatibility is KING when HLS is disabled.
+      // 2. Language matching (avoid wrong dubs)
       // 3. Cached first
       // 4. Size "Sweet Spot"
       ranked.sort((a, b) => {
-        if (a.langScore !== b.langScore) return b.langScore - a.langScore;
         if (a.codecScore !== b.codecScore) return b.codecScore - a.codecScore;
+        if (a.langScore !== b.langScore) return b.langScore - a.langScore;
         if (a.isCached && !b.isCached) return -1;
         if (!a.isCached && b.isCached) return 1;
 
