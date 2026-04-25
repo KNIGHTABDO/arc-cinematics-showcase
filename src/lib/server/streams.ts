@@ -391,8 +391,8 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
 
       // Sort:
       // 1. Cached first
-      // 2. Prefer "Light" files (under 10GB, ideally ~2-5GB for 1080p)
-      // 3. Avoid the 40GB-80GB REMUX monsters that hang the player
+      // 2. Size "Sweet Spot": 1.5 GB to 8 GB is ideal for fast streaming via proxy.
+      // 3. Avoid massive files (>10GB) as they cause fragLoadTimeOut during seeking.
       ranked.sort((a, b) => {
         if (a.isCached && !b.isCached) return -1;
         if (!a.isCached && b.isCached) return 1;
@@ -400,14 +400,15 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         const sizeA_GB = a.sizeBytes / 1e9;
         const sizeB_GB = b.sizeBytes / 1e9;
 
-        // Size "Sweet Spot": 1.5 GB to 8 GB is ideal for most connections
-        const isIdealA = sizeA_GB >= 1.5 && sizeA_GB <= 8;
-        const isIdealB = sizeB_GB >= 1.5 && sizeB_GB <= 8;
+        // "Sweet Spot" for fast, high-quality Web-DLs/Light 4K without buckling the proxy
+        const isIdealA = sizeA_GB >= 1.5 && sizeA_GB <= 8.5;
+        const isIdealB = sizeB_GB >= 1.5 && sizeB_GB <= 8.5;
 
         if (isIdealA && !isIdealB) return -1;
         if (!isIdealA && isIdealB) return 1;
 
-        // If both are outside sweet spot, prefer the smaller one to avoid bandwidth hang
+        // If both are outside the sweet spot, prefer the SMALLER one. 
+        // 18GB+ Remux files take too long for the proxy to chunk during timeline seeks.
         return sizeA_GB - sizeB_GB;
       });
 
@@ -658,79 +659,45 @@ export const resolvePlaybackStream = createServerFn({ method: "POST" })
       const availableQualities = mediaInfos?.availableQualities ?? {};
       const availableQualityValues = Object.values(availableQualities) as string[];
 
-      // "auto" → best available 1080p (NOT "full" — full.m3u8 = original bitrate H264,
-      // can be 20-40 Mbps on high-quality sources, unusable on limited connections).
-      let transcodeQuality = "1080p_4mbps";
-      if (preferredQuality === "2160") {
-        transcodeQuality = "full";
-      } else if (preferredQuality === "1080") {
-        transcodeQuality = availableQualityValues.includes("1080p_8mbps")
-          ? "1080p_8mbps"
-          : "1080p_4mbps";
-      } else if (preferredQuality === "720") {
-        transcodeQuality = availableQualityValues.includes("720p_4mbps")
-          ? "720p_4mbps"
-          : "720p_2mbps";
-      } else if (preferredQuality === "480") {
-        transcodeQuality = "480p_1mbps";
-      } else {
-        // auto: 1080p_8mbps if available, else 1080p_4mbps
-        if (availableQualityValues.includes("1080p_8mbps")) transcodeQuality = "1080p_8mbps";
-        else transcodeQuality = "1080p_4mbps";
+      // Always prioritize the highest available quality for Remux
+      let transcodeQuality = "full";
+      if (!availableQualityValues.includes("full") && availableQualityValues.includes("1080p_8mbps")) {
+        transcodeQuality = "1080p_8mbps";
       }
 
-      // Bandwidth cap: when bitrate filter forces HLS for high-bitrate source,
-      // cap the transcode quality to 1080p_4mbps (~4 Mbps) to ensure smooth
-      // playback on connections under 10 Mbps (e.g. Morocco → AMS ARC).
-      if (bitrateDecision.preferredFormat === "hls" && bitrateDecision.bitrateMbps > 14) {
-        transcodeQuality = "1080p_4mbps";
-        console.log(
-          `[ARC] Bandwidth cap: ${bitrateDecision.bitrateMbps.toFixed(0)} Mbps source → 1080p_4mbps`,
-        );
-      }
-
-      // ── Step 7: Build URLs ────────────────────────────────────────────────
-      let hlsUrl: string | null = null;
-      let mp4Url: string | null = null;
-      let dashUrl: string | null = null;
-
+      // ── Step 7: Build URLs (Pure Real-Debrid) ───────────────────────────
+      // We are bypassing the MediaFlow Proxy entirely because browsers cannot 
+      // natively stream raw MKV files over HTTP, and the proxy transcode/HLS 
+      // generation times out on 4K files. 
+      // We will rely on Real-Debrid's direct CDN links and let AdvancedPlayer 
+      // handle the raw download stream directly, relying on the user's ISP peering.
+      
+      const filename = unrestricted.filename || "";
+      const isMp4 = filename.toLowerCase().endsWith(".mp4");
+      
+      // Legacy RD HLS
+      let rdHlsUrl: string | null = null;
       if (mediaInfos?.modelUrl) {
-        // Primary path: use modelUrl template from mediaInfos
         const audioSlot = selectedAudioId ?? "none";
-        const buildUrl = (quality: string, format: string) =>
-          (mediaInfos.modelUrl as string)
-            .replace("{audio}", audioSlot)
-            .replace("{subtitles}", "none")
-            .replace("{audioCodec}", "aac")
-            .replace("{quality}", quality)
-            .replace("{format}", format);
-        hlsUrl = buildUrl(transcodeQuality, "m3u8");
-        mp4Url = buildUrl("full", "mp4");
-        dashUrl = buildUrl("full", "mpd");
+        rdHlsUrl = (mediaInfos.modelUrl as string)
+          .replace("{audio}", audioSlot)
+          .replace("{subtitles}", "none")
+          .replace("{audioCodec}", "aac")
+          .replace("{quality}", transcodeQuality)
+          .replace("{format}", "m3u8");
       } else if (transcodeHlsBase) {
-        // Fallback path: reconstruct quality-specific URLs from transcode "full" URL
-        // The base looks like: https://3.stream.real-debrid.com/t/HASH/eng1/none/aac
-        hlsUrl = `${transcodeHlsBase}/${transcodeQuality}.m3u8`;
-        mp4Url = transcodeMp4Full; // Only "full" available from transcode endpoint
-        dashUrl = transcodeDashFull;
-        console.log(`[ARC] Using transcode fallback URLs. HLS: ${hlsUrl}`);
-      } else {
-        // Both mediaInfos and transcode failed — cannot stream in browser
-        return {
-          error:
-            "Real-Debrid stream server is temporarily unavailable for this file. Please retry in a few moments.",
-        };
+        rdHlsUrl = `${transcodeHlsBase}/${transcodeQuality}.m3u8`;
       }
 
-      console.log(`[ARC] Stream ready. format=hls (forced) hls=${hlsUrl}`);
+      console.log(`[ARC] Stream ready via Direct RD Link. isMp4: ${isMp4}`);
 
       return {
-        streamUrl: unrestricted.download,
-        originalUrl: unrestricted.download,
-        hlsUrl,
-        mp4Url,
-        dashUrl,
-        preferredFormat: forcedFormat,
+        streamUrl: isMp4 ? unrestricted.download : rdHlsUrl || unrestricted.download,
+        originalUrl: unrestricted.download, 
+        mp4Url: null,          
+        hlsUrl: rdHlsUrl, 
+        dashUrl: null,
+        preferredFormat: isMp4 ? "original" : "hls", // MKVs must stream via HLS on the browser
         bitrateWarning: bitrateDecision.warning,
         availableAudioTracks: audioTracksArray,
         activeAudioTrackId: selectedAudioId,

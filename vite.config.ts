@@ -13,4 +13,13 @@ import { nitro } from "nitro/vite";
 export default defineConfig({
   cloudflare: false,
   plugins: [nitro()],
+  server: {
+    proxy: {
+      "/mfproxy": {
+        target: "http://84.8.216.60:8080",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/mfproxy/, ""),
+      },
+    },
+  },
 });

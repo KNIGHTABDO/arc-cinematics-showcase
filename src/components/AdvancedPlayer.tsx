@@ -202,12 +202,12 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
             preferManagedMediaSource: true,
             lowLatencyMode: false,
 
-            // Buffer: optimized for fast seeking on 17Mbps Cloudflare connection
+            // Buffer: optimized for fast seeking on 17Mbps connection
             maxBufferLength: 8,
             maxMaxBufferLength: 15,
             backBufferLength: 0, // Immediately free memory behind playhead
             maxBufferSize: 30 * 1000 * 1000, // 30 MB max internal buffer
-
+            
             // ABR: start slightly higher (5 Mbps) since Cloudflare is faster
             startLevel: -1,
             abrEwmaDefaultEstimate: 5_000_000,
@@ -236,7 +236,13 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
           hls.on(Hls.Events.ERROR, (_e, data) => {
             if (disposed) return;
             if (!data.fatal) {
-              console.warn(`[ARC] Non-fatal HLS error: ${data.type} / ${data.details}`);
+              console.warn(`[ARC] Non-fatal HLS error: ${data.details}`);
+              // If it's a seek hole, tell the video player to nudge forward slightly to escape the dead zone
+              if (data.details === Hls.ErrorDetails.BUFFER_SEEK_OVER_HOLE || data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+                if (video.paused === false && video.currentTime > 0) {
+                  video.currentTime += 0.1;
+                }
+              }
               return;
             }
             switch (data.type) {
