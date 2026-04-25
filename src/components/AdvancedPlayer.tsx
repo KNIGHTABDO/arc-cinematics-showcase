@@ -138,7 +138,16 @@ export const AdvancedPlayer = React.forwardRef<HTMLVideoElement, AdvancedPlayerP
               console.warn(
                 `[ARC] Browser threw MEDIA_ERR_SRC_NOT_SUPPORTED on ${url}. This might mean the video codec is unsupported, or it's a raw MKV. Waiting...`,
               );
-              // Don't trigger the onError prop immediately, let the user manually click retry if it hangs forever.
+
+              // If the video is still at 0 after 3 seconds, it's a true codec failure (e.g. HEVC download force)
+              setTimeout(() => {
+                if (!disposed && video.currentTime === 0 && props.onError) {
+                  console.error(
+                    `[ARC] True codec failure detected on ${url} (timeout reached). Triggering retry.`,
+                  );
+                  props.onError(e as any);
+                }
+              }, 3000);
             } else {
               console.error(`[ARC] Direct playback error on ${url}: Code ${error?.code}`);
               if (props.onError) props.onError(e as any);

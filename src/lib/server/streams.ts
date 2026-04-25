@@ -358,7 +358,7 @@ const playbackSchema = z.object({
 export const getStreamForMovie = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => resolveTorrentSchema.parse(d))
   .handler(async ({ data }) => {
-    const { watchId, preferredAudioLanguage } = data;
+    const { watchId, preferredAudioLanguage, preferredQuality } = data;
     if (!RD_TOKEN || !TMDB_API_KEY) return { error: "Missing server API tokens" };
     const parsed = parseWatchId(watchId);
     try {
@@ -392,55 +392,86 @@ export const getStreamForMovie = createServerFn({ method: "POST" })
         let langScore = 0;
         const titleLower = c.title.toLowerCase();
         const isDubbed = /lat|dual|ita|spa|ger|fre|fra|rus|hin|tel|tam|dub/i.test(titleLower);
+        const isCam = /cam|hdcam|ts|telesync|hdts|line/i.test(titleLower);
 
         if (preferredAudioLanguage === "en") {
-          if (isDubbed) langScore -= 100; // Heavily penalize foreign dubs if user wants English
+          if (isDubbed) langScore -= 1000; // Heavily penalize foreign dubs if user wants English
         } else if (preferredAudioLanguage) {
-          // If they want Spanish (es) and it says Lat/Spa, boost it
-          if (preferredAudioLanguage === "es" && /lat|spa|esp/i.test(titleLower)) langScore += 50;
-          if (preferredAudioLanguage === "it" && /ita/i.test(titleLower)) langScore += 50;
-          if (preferredAudioLanguage === "de" && /ger|deu/i.test(titleLower)) langScore += 50;
-          if (preferredAudioLanguage === "fr" && /fre|fra/i.test(titleLower)) langScore += 50;
+          if (preferredAudioLanguage === "es" && /lat|spa|esp/i.test(titleLower)) langScore += 500;
+          if (preferredAudioLanguage === "it" && /ita/i.test(titleLower)) langScore += 500;
+          if (preferredAudioLanguage === "de" && /ger|deu/i.test(titleLower)) langScore += 500;
+          if (preferredAudioLanguage === "fr" && /fre|fra/i.test(titleLower)) langScore += 500;
         }
+
+        // Penalize CAM/TS rips (garbage audio/video quality)
+        if (isCam) langScore -= 5000;
 
         // Score for direct browser playback compatibility (CRITICAL without HLS)
         let codecScore = 0;
 
-        // Note: Edge, Safari, and modern Chrome can often play HEVC (x265) directly if the
-        // container is compatible, so we shouldn't ban it completely. However, audio is strict.
-
         // Browsers cannot stream TrueHD or DTS audio. They will play video with no sound.
-        if (/truehd|dts|flac|atmos/i.test(titleLower)) codecScore -= 1000;
+        if (/truehd|dts|flac|atmos|pcm/i.test(titleLower)) codecScore -= 1000;
+
+        // Browsers often force download on HEVC/x265 inside MKV containers
+        // We MUST penalize HEVC so that an H264 stream is chosen instead if available.
+        if (/hevc|h265|x265/i.test(titleLower)) codecScore -= 2000;
 
         // Boost formats we know work well natively in browsers
-        if (/h264|x264|avc/i.test(titleLower)) codecScore += 200;
+        if (/h264|x264|avc/i.test(titleLower)) codecScore += 1000;
         if (/aac|eac3|ac3|dd5\.1/i.test(titleLower)) codecScore += 500; // Browsers love AAC/EAC3
-        if (titleLower.includes("mp4")) codecScore += 100;
+        if (titleLower.includes("mp4")) codecScore += 500;
 
-        return { ...c, isCached, langScore, codecScore };
+        // Score for Quality & Size (to prevent massive freezing MKVs)
+        let qualityScore = 0;
+        const is4k = /2160|4k|uhd/i.test(titleLower);
+        const is8k = /4320|8k/i.test(titleLower);
+        const is1080 = /1080/i.test(titleLower);
+        const is720 = /720/i.test(titleLower);
+        const sizeGB = c.sizeBytes / 1e9;
+
+        // Massive files (>15GB) freeze browsers during direct HTTP streaming.
+        if (sizeGB > 25) qualityScore -= 5000;
+        else if (sizeGB > 15) qualityScore -= 2000;
+
+        if (preferredQuality === "1080") {
+          if (is1080) qualityScore += 1000;
+          if (is4k || is8k) qualityScore -= 3000; // Strict downgrade
+        } else if (preferredQuality === "720") {
+          if (is720) qualityScore += 1000;
+          if (is1080 || is4k || is8k) qualityScore -= 3000;
+        } else if (preferredQuality === "2160") {
+          if (is4k) qualityScore += 1000;
+          if (is8k) qualityScore -= 3000;
+        } else {
+          // Auto: Prefer 1080p for stability, allow 4K if small enough
+          if (is1080) qualityScore += 1000;
+          if (is4k) qualityScore += 500;
+          if (is8k) qualityScore -= 3000;
+        }
+
+        return { ...c, isCached, langScore, codecScore, qualityScore, sizeGB };
       });
 
       // Sort:
-      // 1. Codec compatibility is KING when HLS is disabled.
-      // 2. Language matching (avoid wrong dubs)
-      // 3. Cached first
-      // 4. Size "Sweet Spot"
+      // 1. Quality & Size limits (prevents freezing/crashing)
+      // 2. Codec compatibility is KING when HLS is disabled.
+      // 3. Language matching (avoid wrong dubs and CAM rips)
+      // 4. Cached first
+      // 5. Size "Sweet Spot" (for tie breaks)
       ranked.sort((a, b) => {
+        if (a.qualityScore !== b.qualityScore) return b.qualityScore - a.qualityScore;
         if (a.codecScore !== b.codecScore) return b.codecScore - a.codecScore;
         if (a.langScore !== b.langScore) return b.langScore - a.langScore;
         if (a.isCached && !b.isCached) return -1;
         if (!a.isCached && b.isCached) return 1;
 
-        const sizeA_GB = a.sizeBytes / 1e9;
-        const sizeB_GB = b.sizeBytes / 1e9;
-
-        const isIdealA = sizeA_GB >= 1.5 && sizeA_GB <= 8.5;
-        const isIdealB = sizeB_GB >= 1.5 && sizeB_GB <= 8.5;
+        const isIdealA = a.sizeGB >= 1.5 && a.sizeGB <= 8.5;
+        const isIdealB = b.sizeGB >= 1.5 && b.sizeGB <= 8.5;
 
         if (isIdealA && !isIdealB) return -1;
         if (!isIdealA && isIdealB) return 1;
 
-        return sizeA_GB - sizeB_GB;
+        return a.sizeGB - b.sizeGB;
       });
       const target = ranked[0];
       console.log(
